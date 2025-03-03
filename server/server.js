@@ -5,8 +5,6 @@ const ensureSchema = require('./schema');
 const knex = require('./knex');
 const { default: axios } = require('axios');
 const cors = require('cors');
-const WebTorrent = require('webtorrent');
-const client = new WebTorrent();
 
 const PORT = 8080;
 
@@ -83,10 +81,12 @@ app.get("/movies/:imdb_code", (req, res) => {
     });
 });
 
-app.get("/stream/:imdb_code", (req, res) => {
+app.get("/stream/:imdb_code", async (req, res) => {
     const { imdb_code } = req.params;
 
-    knex('movies').where({ imdb_code }).first().then(movie => {
+    try {
+        const movie = await knex('movies').where({ imdb_code }).first();
+
         if (!movie) {
             return res.status(404).json({ error: "Movie not found" });
         }
@@ -96,6 +96,9 @@ app.get("/stream/:imdb_code", (req, res) => {
         }
 
         const torrentUrl = movie.torrents[0].url;
+
+        const WebTorrent = await import('webtorrent');
+        const client = new WebTorrent.default();
 
         client.add(torrentUrl, torrent => {
             const file = torrent.files.find(file => file.name.endsWith('.mp4'));
@@ -125,9 +128,9 @@ app.get("/stream/:imdb_code", (req, res) => {
             const stream = file.createReadStream({ start, end });
             stream.pipe(res);
         });
-    }).catch(err => {
+    } catch (err) {
         res.status(500).json({ error: err.message });
-    });
+    }
 });
 
 ensureSchema().then(() => {
