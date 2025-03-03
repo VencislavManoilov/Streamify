@@ -16,6 +16,40 @@ app.use(cors({
 dotenv.config();
 app.use(express.json());
 
+const OMDB_API_KEY = process.env.OMDB_API_KEY;
+const OMDB_URL = "https://www.omdbapi.com/";
+
+function uploadMovie(movie, type) {
+    if(!movie.id) {
+        return;
+    }
+    try {
+        if(type === "yts") {
+            const newMovie = {
+                imdb_code: movie.imdb_code,
+                slug: movie.slug || movie.title.toLowerCase().replace(/\s+/g, '-'),
+                title: movie.title,
+                genres: JSON.stringify(movie.genres),
+                year: movie.year,
+                rating: movie.rating,
+                runtime: movie.runtime,
+                summary: movie.summary || "No summary available",
+                background_image: movie.background_image,
+                small_cover_image: movie.small_cover_image,
+                medium_cover_image: movie.medium_cover_image,
+                large_cover_image: movie.large_cover_image,
+                torrents: JSON.stringify(movie.torrents)
+            };
+            return knex('movies').insert(newMovie);
+        }
+    
+        return knex('movies').insert(movie);
+    } catch (dbError) {
+        console.error("Database insertion error:", dbError);
+        return Promise.reject(dbError);
+    }
+}
+
 app.get("/", (req, res) => {
     res.json({ 
         version: '1.0.0',
@@ -37,28 +71,7 @@ app.post("/movies", async (req, res) => {
         const movies = response.data.data.movies;
 
         for (const movie of movies) {
-            try {
-                const newMovie = {
-                    imdb_code: movie.imdb_code,
-                    slug: movie.slug,
-                    title: movie.title,
-                    genres: JSON.stringify(movie.genres),
-                    year: movie.year,
-                    rating: movie.rating,
-                    runtime: movie.runtime,
-                    summary: movie.summary,
-                    background_image: movie.background_image,
-                    small_cover_image: movie.small_cover_image,
-                    medium_cover_image: movie.medium_cover_image,
-                    large_cover_image: movie.large_cover_image,
-                    torrents: JSON.stringify(movie.torrents)
-                };
-
-                await knex('movies').insert(newMovie);
-            } catch (dbError) {
-                console.error("Database insertion error:", dbError);
-                return res.status(500).json({ error: "Database Insertion Error" });
-            }
+            uploadMovie(movie, "yts");
         }
 
         res.json({ message: "Movies added successfully!" });
@@ -180,6 +193,32 @@ app.get("/stream/:imdb_code", async (req, res) => {
         if (!res.headersSent) {
             res.status(500).json({ error: err.message });
         }
+    }
+});
+
+app.get("/search", async (req, res) => {
+    const { query } = req.query;
+    if (!query) return res.status(400).json({ error: "Query is required" });
+
+    try {
+        const response = await axios.get(OMDB_URL, {
+            params: { s: query, apikey: OMDB_API_KEY },
+        });
+
+        if (response.data.Response === "False") {
+            return res.status(404).json({ error: response.data.Error });
+        }
+
+        response.data.Search.forEach(async (search) => {
+            const data = await axios.get("https://yts.mx/api/v2/movie_details.json?imdb_id=" + search.imdbID);
+            movie = data.data.data.movie;
+            await uploadMovie(movie, "yts");
+        });
+
+        res.json(response.data.Search);
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: "Failed to fetch movies" });
     }
 });
 
