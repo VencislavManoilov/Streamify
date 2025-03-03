@@ -19,12 +19,17 @@ app.use(express.json());
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
 
-function uploadMovie(movie, type) {
-    if(!movie.id) {
+async function uploadMovie(movie, type) {
+    if (!movie.id) {
         return;
     }
     try {
-        if(type === "yts") {
+        const existingMovie = await knex('movies').where({ imdb_code: movie.imdb_code }).first();
+        if (existingMovie) {
+            return;
+        }
+
+        if (type === "yts") {
             const newMovie = {
                 imdb_code: movie.imdb_code,
                 slug: movie.slug || movie.title.toLowerCase().replace(/\s+/g, '-'),
@@ -42,7 +47,7 @@ function uploadMovie(movie, type) {
             };
             return knex('movies').insert(newMovie);
         }
-    
+
         return knex('movies').insert(movie);
     } catch (dbError) {
         console.error("Database insertion error:", dbError);
