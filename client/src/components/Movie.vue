@@ -5,7 +5,7 @@
         <p>Rating: {{ movie.rating }}</p>
         <p>Genres: {{ movie.genres.join(', ') }}</p>
         <video class="movie" v-if="movie.torrents && movie.torrents.length" controls>
-            <source :src="process.env.BACKEND_URL+`/stream/${movie.imdb_code}`" type="video/mp4" />
+            <source :src="`${URL}/stream/${movie.imdb_code}`" type="video/mp4" />
             Your browser does not support the video tag.
         </video>
     </div>
@@ -20,7 +20,8 @@ export default {
     name: 'MoviePage',
     data() {
         return {
-            movie: null
+            movie: null,
+            URL: URL
         };
     },
     mounted() {
