@@ -3,10 +3,12 @@
         <h1>Movies</h1>
         <div class="movies">
             <div v-for="movie in movies" :key="movie.title" class="movie">
-                <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" />
-                <h2>{{ movie.title }}</h2>
-                <p>Rating: {{ movie.rating }}</p>
-                <p>Genres: {{ movie.genres.join(', ') }}</p>
+                <router-link :to="'/movie/' + movie.imdb_code">
+                    <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" />
+                    <h2>{{ movie.title }}</h2>
+                    <p>Rating: {{ movie.rating }}</p>
+                    <p>Genres: {{ movie.genres.join(', ') }}</p>
+                </router-link>
             </div>
         </div>
     </div>
