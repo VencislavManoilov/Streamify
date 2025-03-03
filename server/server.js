@@ -4,8 +4,13 @@ const dotenv = require('dotenv');
 const ensureSchema = require('./schema');
 const knex = require('./knex');
 const { default: axios } = require('axios');
+const cors = require('cors');
 
 const PORT = 8080;
+
+app.use(cors({
+    origin: "http://localhost:3000"
+}));
 
 dotenv.config();
 app.use(express.json());
