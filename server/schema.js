@@ -12,7 +12,7 @@ const schemaDefinition = {
     imdb_code: { type: 'string', unique: true, notNullable: true },
     slug: { type: 'string', unique: true, notNullable: true },
     title: { type: 'string', notNullable: true },
-    genres: { type: 'string', notNullable: true },
+    genres: { type: 'json', notNullable: true },
     year: { type: 'integer', notNullable: true },
     rating: { type: 'float', notNullable: true },
     runtime: { type: 'integer', notNullable: true },
@@ -21,7 +21,7 @@ const schemaDefinition = {
     small_cover_image: { type: 'string', notNullable: true },
     medium_cover_image: { type: 'string', notNullable: true },
     large_cover_image: { type: 'string', notNullable: true },
-    torrents: { type: 'string', notNullable: true },
+    torrents: { type: 'json', notNullable: true },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   }
 };
