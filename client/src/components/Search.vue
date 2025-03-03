@@ -16,7 +16,7 @@
 <script>
 import axios from 'axios';
 
-const URL = process.env.BACKEND_URL || 'http://localhost:8080';
+const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
 
 export default {
     name: "SearchPage",
