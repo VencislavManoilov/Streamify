@@ -22,6 +22,8 @@
 <script>
 import axios from 'axios';
 
+const URL = process.env.BACKEND_URL || 'http://localhost:8080';
+
 export default {
     name: 'HomePage',
     data() {
@@ -31,7 +33,7 @@ export default {
         };
     },
     mounted() {
-        axios.get('http://localhost:8080/movies')
+        axios.get(URL+"/movies")
         .then(response => {
             this.movies = response.data.movies;
         }).catch(error => {

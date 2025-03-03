@@ -16,6 +16,8 @@
 <script>
 import axios from 'axios';
 
+const URL = process.env.BACKEND_URL || 'http://localhost:8080';
+
 export default {
     name: "SearchPage",
     data() {
@@ -38,7 +40,7 @@ export default {
             }
 
             try {
-                const response = await fetch(`http://localhost:8080/search?query=${query}`);
+                const response = await fetch(URL+`/search?query=${query}`);
                 if (!response.ok) {
                     throw new Error("Failed to fetch movies.");
                 }
@@ -48,7 +50,7 @@ export default {
                 await new Promise(resolve => setTimeout(resolve, 500));
 
                 await data.forEach(async (movie) => {
-                    await axios.get(`http://localhost:8080/movies/${movie.imdbID}`)
+                    await axios.get(URL+`/movies/${movie.imdbID}`)
                     .then(response => {
                         this.movies.push(response.data.movie);
                     }).catch(error => {

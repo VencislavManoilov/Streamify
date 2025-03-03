@@ -5,7 +5,7 @@
         <p>Rating: {{ movie.rating }}</p>
         <p>Genres: {{ movie.genres.join(', ') }}</p>
         <video class="movie" v-if="movie.torrents && movie.torrents.length" controls>
-            <source :src="`http://localhost:8080/stream/${movie.imdb_code}`" type="video/mp4" />
+            <source :src="process.env.BACKEND_URL+`/stream/${movie.imdb_code}`" type="video/mp4" />
             Your browser does not support the video tag.
         </video>
     </div>
@@ -13,6 +13,8 @@
 
 <script>
 import axios from 'axios';
+
+const URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
 export default {
     name: 'MoviePage',
@@ -23,7 +25,7 @@ export default {
     },
     mounted() {
         const imdbCode = this.$route.params.imdb_code;
-        axios.get(`http://localhost:8080/movies/${imdbCode}`)
+        axios.get(URL+`/movies/${imdbCode}`)
         .then(response => {
             this.movie = response.data.movie;
         }).catch(error => {
