@@ -5,6 +5,7 @@ const ensureSchema = require('./schema');
 const knex = require('./knex');
 const { default: axios } = require('axios');
 const cors = require('cors');
+const rangeParser = require('range-parser');
 
 const PORT = 8080;
 
@@ -112,24 +113,73 @@ app.get("/stream/:imdb_code", async (req, res) => {
                 return res.status(416).send('Requires Range header');
             }
 
-            const positions = range.replace(/bytes=/, "").split("-");
-            const start = parseInt(positions[0], 10);
-            const file_size = file.length;
-            const end = positions[1] ? parseInt(positions[1], 10) : file_size - 1;
+            const ranges = rangeParser(file.length, range);
+            if (ranges === -1) {
+                return res.status(416).send('Unsatisfiable Range');
+            }
+            if (ranges === -2) {
+                return res.status(400).send('Malformed Range');
+            }
+
+            const { start, end } = ranges[0];
             const chunksize = (end - start) + 1;
 
             res.writeHead(206, {
-                "Content-Range": `bytes ${start}-${end}/${file_size}`,
+                "Content-Range": `bytes ${start}-${end}/${file.length}`,
                 "Accept-Ranges": "bytes",
                 "Content-Length": chunksize,
                 "Content-Type": "video/mp4"
             });
 
             const stream = file.createReadStream({ start, end });
+            let responseSent = false;
+
+            stream.on('error', (streamErr) => {
+                if (!responseSent) {
+                    res.status(500).json({ error: 'Stream error' });
+                    responseSent = true;
+                }
+                if (!client.destroyed) {
+                    client.destroy();
+                }
+            });
+
             stream.pipe(res);
+
+            res.on('close', () => {
+                if (!responseSent) {
+                    responseSent = true;
+                }
+                if (!stream.destroyed) {
+                    stream.destroy();
+                }
+                if (!client.destroyed) {
+                    client.destroy();
+                }
+            });
+
+            stream.on('end', () => {
+                responseSent = true;
+            });
         });
+
+        client.on('error', (clientErr) => {
+            if (clientErr.code === 'UTP_ECONNRESET') {
+                console.log('Connection reset by peer');
+            } else {
+                if (!res.headersSent) {
+                    res.status(500).json({ error: 'Client error' });
+                }
+            }
+            if (!client.destroyed) {
+                client.destroy();
+            }
+        });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: err.message });
+        }
     }
 });
 
