@@ -1,5 +1,10 @@
 <template>
     <div class="home">
+        <!-- Search input and button -->
+        <div class="search-bar">
+            <input v-model="searchQuery" type="text" placeholder="Search for movies..." />
+            <button @click="searchMovies">Search</button>
+        </div>
         <h1>Movies</h1>
         <div class="movies">
             <div v-for="movie in movies" :key="movie.title" class="movie">
@@ -21,7 +26,8 @@ export default {
     name: 'HomePage',
     data() {
         return {
-            movies: []
+            movies: [],
+            searchQuery: ''
         };
     },
     mounted() {
@@ -31,6 +37,13 @@ export default {
         }).catch(error => {
             console.error('There was an error!', error);
         });
+    },
+    methods: {
+        searchMovies() {
+            if (this.searchQuery.trim() !== '') {
+                this.$router.push({ path: '/search', query: { query: this.searchQuery } });
+            }
+        }
     }
 };
 </script>
@@ -38,6 +51,23 @@ export default {
 <style scoped>
 .home {
     padding: 20px;
+}
+
+.search-bar {
+    margin-bottom: 20px;
+}
+
+.search-bar input {
+    padding: 10px;
+    font-size: 16px;
+    width: 300px;
+    margin-right: 10px;
+}
+
+.search-bar button {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
 }
 
 .movies {
