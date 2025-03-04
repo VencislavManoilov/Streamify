@@ -11,6 +11,7 @@
                     <label for="password">Password:</label>
                     <input type="password" id="password" v-model="password" required />
                 </div>
+                <p>Don't have an account? <a v-on:click="$emit('openRegister')">Register</a></p>
                 <button type="submit">Login</button>
             </form>
         </div>
@@ -18,6 +19,8 @@
 </template>
 
 <script>
+import axios from 'axios';
+
 export default {
     name: "LoginPage",
     data() {
@@ -32,10 +35,18 @@ export default {
         };
     },
     methods: {
-        handleLogin() {
-            // Handle login logic here
-            console.log('Email:', this.email);
-            console.log('Password:', this.password);
+        async handleLogin() {
+            try {
+                const response = await axios.post('http://localhost:8080/auth/login', {
+                    email: this.email,
+                    password: this.password
+                })
+
+                localStorage.setItem('token', response.data.token);
+                window.location.reload();
+            } catch (error) {
+                console.error('There was an error!', error);
+            }
         }
     }
 };

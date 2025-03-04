@@ -15,6 +15,7 @@
                     <label for="password">Password:</label>
                     <input type="password" id="password" v-model="password" required />
                 </div>
+                <p>Already have an account? <a v-on:click="$emit('openLogin')">Login</a></p>
                 <button type="submit">Register</button>
             </form>
         </div>
@@ -22,6 +23,8 @@
 </template>
 
 <script>
+import axios from 'axios';
+
 export default {
     name: "RegisterPage",
     data() {
@@ -37,10 +40,20 @@ export default {
         };
     },
     methods: {
-        handleRegister() {
-            console.log('Username:', this.username);
-            console.log('Email:', this.email);
-            console.log('Password:', this.password);
+        async handleRegister() {
+            try {
+                const response = await axios.post('http://localhost:8080/auth/register', {
+                    username: this.username,
+                    email: this.email,
+                    password: this.password
+                })
+
+                if(response.status === 200) {
+                    this.$emit('openLogin');
+                }
+            } catch (error) {
+                console.error('There was an error!', error);
+            }
         }
     }
 };

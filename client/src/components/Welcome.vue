@@ -6,8 +6,8 @@
             <button v-on:click="register = true">Register</button>
         </div>
     </div>
-    <Login v-if="login" @close="handleOutsideClick" />
-    <Register v-if="register" @close="handleOutsideClick" />
+    <Login v-if="login" @openRegister="openRegister" @close="handleOutsideClick" />
+    <Register v-if="register" @openLogin="openLogin" @close="handleOutsideClick" />
 </template>
 
 <script>
@@ -32,6 +32,14 @@ export default {
                 this.login = false;
                 this.register = false;
             }
+        },
+        openLogin() {
+            this.register = false;
+            this.login = true;
+        },
+        openRegister() {
+            this.login = false;
+            this.register = true;
         }
     }
 }
