@@ -1,4 +1,4 @@
-FROM node:16-alpine
+FROM node:20
 
 WORKDIR /app
 
@@ -8,8 +8,5 @@ RUN npm install
 COPY . .
 
 EXPOSE 8080
-
-# Increase memory limit
-ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 CMD ["npm", "start"]
