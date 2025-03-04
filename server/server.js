@@ -16,6 +16,7 @@ app.use(cors({
 
 dotenv.config();
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
@@ -97,10 +98,7 @@ app.get("/movies/:imdb_code", (req, res, next) => {
     });
 });
 
-app.get("/stream/:imdb_code", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, async (req, res) => {
+app.get("/stream/:imdb_code", async (req, res) => {
     const { imdb_code } = req.params;
 
     try {
