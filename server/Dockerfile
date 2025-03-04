@@ -9,4 +9,7 @@ COPY . .
 
 EXPOSE 8080
 
+# Increase memory limit
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+
 CMD ["npm", "start"]
