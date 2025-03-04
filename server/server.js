@@ -6,6 +6,7 @@ const knex = require('./knex');
 const { default: axios } = require('axios');
 const cors = require('cors');
 const rangeParser = require('range-parser');
+const Authorization = require('./middleware/Auth');
 
 const PORT = 8080;
 
@@ -68,7 +69,10 @@ app.use('/auth', async (req, res, next) => {
     next();
 }, authRoute);
 
-app.get("/movies", (req, res) => {
+app.get("/movies", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, (req, res) => {
     knex('movies').select('*').then(movies => {
         res.json({ movies });
     }).catch(err => {
@@ -76,23 +80,10 @@ app.get("/movies", (req, res) => {
     });
 });
 
-app.post("/movies", async (req, res) => {
-    try {
-        const response = await axios.get("https://yts.mx/api/v2/list_movies.json");
-        const movies = response.data.data.movies;
-
-        for (const movie of movies) {
-            uploadMovie(movie, "yts");
-        }
-
-        res.json({ message: "Movies added successfully!" });
-    } catch (err) {
-        console.error("Error fetching movies or processing data:", err);
-        res.status(500).json({ error: "Internal Server Error" });
-    }
-});
-
-app.get("/movies/:imdb_code", (req, res) => {
+app.get("/movies/:imdb_code", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, (req, res) => {
     const { imdb_code } = req.params;
 
     knex('movies').where({ imdb_code }).first().then(movie => {
@@ -106,7 +97,10 @@ app.get("/movies/:imdb_code", (req, res) => {
     });
 });
 
-app.get("/stream/:imdb_code", async (req, res) => {
+app.get("/stream/:imdb_code", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, async (req, res) => {
     const { imdb_code } = req.params;
 
     try {
@@ -207,7 +201,10 @@ app.get("/stream/:imdb_code", async (req, res) => {
     }
 });
 
-app.get("/search", async (req, res) => {
+app.get("/search", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, async (req, res) => {
     const { query } = req.query;
     if (!query) return res.status(400).json({ error: "Query is required" });
 
