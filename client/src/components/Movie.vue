@@ -4,8 +4,13 @@
         <!-- <img :src="movie.large_cover_image" :alt="movie.title" class="movie-image" /> -->
         <p>Rating: {{ movie.rating }}</p>
         <p>Genres: {{ movie.genres.join(', ') }}</p>
-        <video class="movie" v-if="movie.torrents && movie.torrents.length" controls>
-            <source :src="`${URL}/stream/${movie.imdb_code}`" type="video/mp4" />
+        <div v-if="movie.torrents && movie.torrents.length">
+            <div v-for="torrent in movie.torrents" :key="torrent.url">
+                <button @click="selectedTorrent = torrent.hash">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
+            </div>
+        </div>
+        <video class="movie" v-if="selectedTorrent && movie.torrents && movie.torrents.length" controls>
+            <source :src="`${URL}/stream/${movie.imdb_code}/${selectedTorrent}`" type="video/mp4" />
             Your browser does not support the video tag.
         </video>
     </div>
@@ -21,6 +26,7 @@ export default {
     data() {
         return {
             movie: null,
+            selectedTorrent: null,
             URL: URL
         };
     },
