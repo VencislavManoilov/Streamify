@@ -98,7 +98,7 @@ app.get("/movies/:imdb_code", (req, res, next) => {
     });
 });
 
-app.get("/stream/:imdb_code", async (req, res) => {
+app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     const { imdb_code } = req.params;
 
     try {
@@ -112,7 +112,11 @@ app.get("/stream/:imdb_code", async (req, res) => {
             return res.status(404).json({ error: "Torrent not found" });
         }
 
-        const torrentUrl = movie.torrents[0].url;
+        const torrent = movie.torrents.find(torr => torr.hash === req.params.torrent_hash);
+        if (!torrent) {
+            return res.status(404).json({ error: "Torrent not found" });
+        }
+        const torrentUrl = torrent.url;
 
         const WebTorrent = await import('webtorrent');
         const client = new WebTorrent.default();
