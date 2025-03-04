@@ -14,7 +14,7 @@ app.use(cors({
 }));
 
 dotenv.config();
-app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
@@ -61,6 +61,12 @@ app.get("/", (req, res) => {
         message: "Welcome to Streamify API!"
     });
 })
+
+const authRoute = require('./routes/auth');
+app.use('/auth', async (req, res, next) => {
+    req.knex = knex;
+    next();
+}, authRoute);
 
 app.get("/movies", (req, res) => {
     knex('movies').select('*').then(movies => {
