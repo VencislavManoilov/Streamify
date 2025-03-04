@@ -33,7 +33,11 @@ export default {
         };
     },
     mounted() {
-        axios.get(URL+"/movies")
+        axios.get(URL+"/movies", {
+            headers: {
+                Authorization: localStorage.getItem('token')
+            }
+        })
         .then(response => {
             this.movies = response.data.movies;
         }).catch(error => {

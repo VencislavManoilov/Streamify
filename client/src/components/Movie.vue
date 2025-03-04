@@ -26,7 +26,11 @@ export default {
     },
     mounted() {
         const imdbCode = this.$route.params.imdb_code;
-        axios.get(URL+`/movies/${imdbCode}`)
+        axios.get(URL+`/movies/${imdbCode}`, {
+            headers: {
+                Authorization: localStorage.getItem('token')
+            }
+        })
         .then(response => {
             this.movie = response.data.movie;
         }).catch(error => {

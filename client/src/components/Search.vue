@@ -40,7 +40,11 @@ export default {
             }
 
             try {
-                const response = await fetch(URL+`/search?query=${query}`);
+                const response = await fetch(URL+`/search?query=${query}`, {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
                 if (!response.ok) {
                     throw new Error("Failed to fetch movies.");
                 }
@@ -50,7 +54,11 @@ export default {
                 await new Promise(resolve => setTimeout(resolve, 500));
 
                 await data.forEach(async (movie) => {
-                    await axios.get(URL+`/movies/${movie.imdbID}`)
+                    await axios.get(URL+`/movies/${movie.imdbID}`, {
+                        headers: {
+                            Authorization: localStorage.getItem('token')
+                        }
+                    })
                     .then(response => {
                         this.movies.push(response.data.movie);
                     }).catch(error => {
