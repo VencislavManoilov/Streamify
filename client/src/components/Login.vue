@@ -21,6 +21,8 @@
 <script>
 import axios from 'axios';
 
+const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
+
 export default {
     name: "LoginPage",
     data() {
@@ -37,7 +39,7 @@ export default {
     methods: {
         async handleLogin() {
             try {
-                const response = await axios.post('http://localhost:8080/auth/login', {
+                const response = await axios.post(URL+'/auth/login', {
                     email: this.email,
                     password: this.password
                 })

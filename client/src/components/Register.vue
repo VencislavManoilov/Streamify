@@ -25,6 +25,8 @@
 <script>
 import axios from 'axios';
 
+const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
+
 export default {
     name: "RegisterPage",
     data() {
@@ -42,7 +44,7 @@ export default {
     methods: {
         async handleRegister() {
             try {
-                const response = await axios.post('http://localhost:8080/auth/register', {
+                const response = await axios.post(URL+'/auth/register', {
                     username: this.username,
                     email: this.email,
                     password: this.password
