@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const Authorization = require('../middleware/Auth');
 
 const router = express.Router();
 
@@ -44,26 +45,16 @@ router.post('/login', async (req, res) => {
     })
 });
 
-router.get('/me', async (req, res) => {
-    const token = req.headers.authorization;
-    if (!token) {
+router.get('/me', Authorization, async (req, res) => {
+    if (!req.user) {
         return res.status(401).send('Unauthorized');
     }
 
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await req.knex('users').where({ email: decoded.email }).first();
-        if (user) {
-            delete user.password;
-        }
-        if (!user) {
-            return res.status(401).send('Unauthorized');
-        }
-
-        res.json({ user });
-    } catch (err) {
-        res.status(401).send('Unauthorized');
+    if (req.user) {
+        delete req.user.password;
     }
+
+    res.json({ user: req.user });
 });
 
 module.exports = router;
