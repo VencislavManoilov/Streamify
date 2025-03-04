@@ -3,8 +3,9 @@ const knex = require('./knex');
 const schemaDefinition = {
   users: {
     id: { type: 'increments', primary: true },
-    name: { type: 'string', notNullable: true },
+    username: { type: 'string', notNullable: true },
     email: { type: 'string', unique: true, notNullable: true },
+    password: { type: 'string', notNullable: true },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   },
   movies: {
