@@ -234,8 +234,67 @@ app.get("/search", (req, res, next) => {
     }
 });
 
+const fetchTrendingMovies = async () => {
+    const trendingMovies = await axios.get(`https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
+    const newMovies = await axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
+    const popular = await axios.get(`https://api.themoviedb.org/3/movie/popular?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
+    const topRated = await axios.get(`https://api.themoviedb.org/3/movie/top_rated?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
+
+    const trendingMoviesData = trendingMovies.data.results;
+    const newMoviesData = newMovies.data.results;
+    const popularMoviesData = popular.data.results;
+    const topRatedMoviesData = topRated.data.results;
+
+    const allCategories = [{name: "Trending", movies: trendingMoviesData}, {name: "New Movies", movies: newMoviesData}, {name: "Popular", movies: popularMoviesData}, {name: "Popular", movies: topRatedMoviesData}];
+    for(const category of allCategories) {
+        let categoryMovies = [];
+        console.log(`Fetching YTS movies for category ${category.name}...`);
+        for(const movie of category.movies) {
+            if(movie.original_title) {
+                try {
+                    const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
+                    const ytsMovie = data.data.data.movies[0];
+                    categoryMovies.push(ytsMovie);
+                } catch (error) {
+                    console.log(`Failed to fetch or upload movie with ID ${movie.id}:`, error);
+                }
+            }
+        }
+
+        console.log(`Uploading ${categoryMovies.length} movies for category ${category.name}...`);
+        for(const movie of categoryMovies) {
+            await uploadMovie(movie, "yts");
+        }
+        console.log(`Uploaded ${categoryMovies.length} movies for category ${category.name}!`);
+
+        try {
+            console.log(`Inserting category ${category.name} into database...`);
+            const existingCategory = await knex('categories').where({ name: category.name }).first();
+            if (existingCategory) {
+                const movieIds = categoryMovies.map(movie => movie.imdb_code);
+                await knex('categories').where({ name: category.name }).update({ movies: JSON.stringify(movieIds) });
+            } else {
+                const movieIds = categoryMovies.map(movie => movie.imdb_code);
+                await knex('categories').insert({ name: category.name, movies: JSON.stringify(movieIds) });
+            }
+            console.log(`Category ${category.name} inserted successfully!`);
+        } catch (dbError) {
+            console.log(`Database insertion error for category ${category.name}:`, dbError);
+        }
+    }
+
+    return console.log("Fetched movies for categories!");
+};
+
 // Dynamically import WebTorrent and initialize torrentClient before starting the server
 (async () => {
+    // try {
+    //     console.log("Fetching movies for categories...");
+    //     await fetchTrendingMovies();
+    // } catch (err) {
+    //     console.error("Failed to fetch movie categories:", err);
+    // }
+
     try {
         const { default: WebTorrent } = await import('webtorrent');
         torrentClient = new WebTorrent();

@@ -24,6 +24,12 @@ const schemaDefinition = {
     large_cover_image: { type: 'string', notNullable: true },
     torrents: { type: 'json', notNullable: true },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  categories: {
+    id: { type: 'increments', primary: true },
+    name: { type: 'string', unique: true, notNullable: true },
+    movies: { type: 'json', notNullable: true },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   }
 };
 
