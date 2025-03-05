@@ -77,7 +77,7 @@ app.get("/movies", (req, res, next) => {
     req.knex = knex;
     next();
 }, Authorization, (req, res) => {
-    knex('movies').select('*').then(movies => {
+    knex('movies').select('*').limit(15).then(movies => {
         res.json({ movies });
     }).catch(err => {
         res.status(500).json({ error: err.message });
