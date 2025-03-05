@@ -5,15 +5,17 @@
             <input v-model="searchQuery" type="text" placeholder="Search for movies..." />
             <button @click="searchMovies">Search</button>
         </div>
-        <h1>Movies</h1>
-        <div class="movies">
-            <div v-for="movie in movies" :key="movie.title" class="movie">
-                <router-link :to="'/movie/' + movie.imdb_code">
-                    <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" />
-                    <h2>{{ movie.title }}</h2>
-                    <p>Rating: {{ movie.rating }}</p>
-                    <p>Genres: {{ movie.genres.join(', ') }}</p>
-                </router-link>
+        <div class="category" v-for="category in categories" :key="category.name">
+            <h2>{{ category.name }}</h2>
+            <div class="movies">
+                <div v-for="movie in category.movies" :key="movie.title" class="movie">
+                    <router-link :to="'/movie/' + movie.imdb_code">
+                        <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" />
+                        <h3>{{ movie.title }}</h3>
+                        <p>Rating: {{ movie.rating }}</p>
+                        <p>Genres: {{ movie.genres.join(', ') }}</p>
+                    </router-link>
+                </div>
             </div>
         </div>
     </div>
@@ -28,18 +30,37 @@ export default {
     name: 'MovieCatalog',
     data() {
         return {
-            movies: [],
+            categories: [],
             searchQuery: ''
         };
     },
-    mounted() {
-        axios.get(URL+"/movies", {
+    async mounted() {
+        await axios.get(URL+"/categories", {
             headers: {
                 Authorization: localStorage.getItem('token')
             }
         })
-        .then(response => {
-            this.movies = response.data.movies;
+        .then(async (response) => {
+            let movieIds = response.data.categories;
+            let newCategories = [];
+            for(const category of movieIds) {
+                let newCategory = { name: category.name, movies: [] };
+                for(const movie of category.movies) {
+                    await axios.get(URL+`/movies/${movie}`, {
+                        headers: {
+                            Authorization: localStorage.getItem('token')
+                        }
+                    })
+                    .then(response => {
+                        newCategory.movies.push(response.data.movie);
+                    }).catch(error => {
+                        console.error('There was an error!', error);
+                    });
+                }
+                newCategories.push(newCategory);
+            }
+
+            this.categories = newCategories;
         }).catch(error => {
             console.error('There was an error!', error);
         });
@@ -72,17 +93,26 @@ export default {
     cursor: pointer;
 }
 
-.movies {
+.category {
+    margin-bottom: 20px;
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    width: 100%;
 }
 
+.movies {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    overflow-x: auto;
+    gap: 10px;
+}
 .movie {
+    flex: 0 0 200px;
     margin: 10px;
     padding: 10px;
     border: 1px solid #ccc;
     border-radius: 5px;
-    width: 200px;
     text-align: center;
 }
 
