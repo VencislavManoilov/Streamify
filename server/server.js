@@ -18,6 +18,8 @@ dotenv.config();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+let torrentClient;
+
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
 
@@ -99,7 +101,7 @@ app.get("/movies/:imdb_code", (req, res, next) => {
 });
 
 app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
-    const { imdb_code } = req.params;
+    const { imdb_code, torrent_hash } = req.params;
 
     try {
         const movie = await knex('movies').where({ imdb_code }).first();
@@ -112,89 +114,101 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
             return res.status(404).json({ error: "Torrent not found" });
         }
 
-        const torrent = movie.torrents.find(torr => torr.hash === req.params.torrent_hash);
-        if (!torrent) {
+        const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
+        if (!torrentMeta) {
             return res.status(404).json({ error: "Torrent not found" });
         }
-        const torrentUrl = torrent.url;
+        const torrentUrl = torrentMeta.url;
 
-        const WebTorrent = await import('webtorrent');
-        const client = new WebTorrent.default();
-
-        client.add(torrentUrl, torrent => {
-            const file = torrent.files.find(file => file.name.endsWith('.mp4'));
-
-            if (!file) {
-                return res.status(404).json({ error: "MP4 file not found in torrent" });
-            }
-
-            const range = req.headers.range;
-            if (!range) {
-                return res.status(416).send('Requires Range header');
-            }
-
-            const ranges = rangeParser(file.length, range);
-            if (ranges === -1) {
-                return res.status(416).send('Unsatisfiable Range');
-            }
-            if (ranges === -2) {
-                return res.status(400).send('Malformed Range');
-            }
-
-            const { start, end } = ranges[0];
-            const chunksize = (end - start) + 1;
-
-            res.writeHead(206, {
-                "Content-Range": `bytes ${start}-${end}/${file.length}`,
-                "Accept-Ranges": "bytes",
-                "Content-Length": chunksize,
-                "Content-Type": "video/mp4"
+        // Wrap torrent addition in a promise
+        const torrentInstance = await new Promise((resolve, reject) => {
+            torrentClient.add(torrentUrl, torrent => {
+                resolve(torrent);
             });
-
-            const stream = file.createReadStream({ start, end });
-            let responseSent = false;
-
-            stream.on('error', (streamErr) => {
-                if (!responseSent) {
-                    res.status(500).json({ error: 'Stream error' });
-                    responseSent = true;
-                }
-                if (!client.destroyed) {
-                    client.destroy();
-                }
-            });
-
-            stream.pipe(res);
-
-            res.on('close', () => {
-                if (!responseSent) {
-                    responseSent = true;
-                }
-                if (!stream.destroyed) {
-                    stream.destroy();
-                }
-                if (!client.destroyed) {
-                    client.destroy();
-                }
-            });
-
-            stream.on('end', () => {
-                responseSent = true;
+            torrentClient.once('error', (err) => {
+                reject(err);
             });
         });
 
-        client.on('error', (clientErr) => {
-            if (clientErr.code === 'UTP_ECONNRESET') {
-                console.log('Connection reset by peer');
-            } else {
-                if (!res.headersSent) {
-                    res.status(500).json({ error: 'Client error' });
+        const file = torrentInstance.files.find(file => file.name.endsWith('.mp4'));
+        if (!file) {
+            if (torrentClient.get(torrentInstance.infoHash)) {
+                torrentClient.remove(torrentInstance.infoHash);
+            }
+            return res.status(404).json({ error: "MP4 file not found in torrent" });
+        }
+
+        const range = req.headers.range;
+        if (!range) {
+            if (torrentClient.get(torrentInstance.infoHash)) {
+                torrentClient.remove(torrentInstance.infoHash);
+            }
+            return res.status(416).send('Requires Range header');
+        }
+
+        const ranges = rangeParser(file.length, range);
+        if (ranges === -1) {
+            if (torrentClient.get(torrentInstance.infoHash)) {
+                torrentClient.remove(torrentInstance.infoHash);
+            }
+            return res.status(416).send('Unsatisfiable Range');
+        }
+        if (ranges === -2) {
+            if (torrentClient.get(torrentInstance.infoHash)) {
+                torrentClient.remove(torrentInstance.infoHash);
+            }
+            return res.status(400).send('Malformed Range');
+        }
+
+        const { start, end } = ranges[0];
+        const chunksize = (end - start) + 1;
+
+        res.writeHead(206, {
+            "Content-Range": `bytes ${start}-${end}/${file.length}`,
+            "Accept-Ranges": "bytes",
+            "Content-Length": chunksize,
+            "Content-Type": "video/mp4",
+            "Cross-Origin-Resource-Policy": "cross-origin"
+        });
+
+        const stream = file.createReadStream({ start, end });
+        let responded = false;
+        let cleanupDone = false;
+
+        function cleanup() {
+            if (!cleanupDone) {
+                cleanupDone = true;
+                // Only remove if torrent still exists
+                if (torrentClient.get(torrentInstance.infoHash)) {
+                    torrentClient.remove(torrentInstance.infoHash);
                 }
             }
-            if (!client.destroyed) {
-                client.destroy();
+        }
+
+        stream.on('error', (streamErr) => {
+            if (!responded) {
+                responded = true;
+                res.status(500).json({ error: 'Stream error' });
             }
+            cleanup();
         });
+
+        stream.on('end', () => {
+            responded = true;
+            cleanup();
+        });
+
+        res.on('close', () => {
+            if (!responded) {
+                responded = true;
+            }
+            if (!stream.destroyed) {
+                stream.destroy();
+            }
+            cleanup();
+        });
+
+        stream.pipe(res);
 
     } catch (err) {
         if (!res.headersSent) {
@@ -232,8 +246,21 @@ app.get("/search", (req, res, next) => {
     }
 });
 
-ensureSchema().then(() => {
-    app.listen(PORT, () => {
-        console.log(`Server is running on port ${PORT}`);
-    });
-});
+// Dynamically import WebTorrent and initialize torrentClient before starting the server
+(async () => {
+    try {
+        const { default: WebTorrent } = await import('webtorrent');
+        torrentClient = new WebTorrent();
+        torrentClient.setMaxListeners(20);
+
+        // Continue with any other initialization before starting the server...
+        ensureSchema().then(() => {
+            app.listen(PORT, () => {
+                console.log(`Server is running on port ${PORT}`);
+            });
+        });
+    } catch (err) {
+        console.error('Failed to load WebTorrent module:', err);
+        process.exit(1);
+    }
+})();
