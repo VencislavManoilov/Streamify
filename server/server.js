@@ -7,6 +7,7 @@ const { default: axios } = require('axios');
 const cors = require('cors');
 const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
+const TorrentManager = require('./utils/torrentManager');
 
 const PORT = 8080;
 
@@ -120,97 +121,84 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
         }
         const torrentUrl = torrentMeta.url;
 
-        // Wrap torrent addition in a promise
-        const torrentInstance = await new Promise((resolve, reject) => {
-            torrentClient.add(torrentUrl, torrent => {
-                resolve(torrent);
+        try {
+            // Get torrent from torrent manager
+            const torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
+            
+            const file = torrentInstance.files.find(file => file.name.endsWith('.mp4'));
+            if (!file) {
+                global.torrentManager.releaseReference(torrent_hash);
+                return res.status(404).json({ error: "MP4 file not found in torrent" });
+            }
+
+            const range = req.headers.range;
+            if (!range) {
+                global.torrentManager.releaseReference(torrent_hash);
+                return res.status(416).send('Requires Range header');
+            }
+
+            const ranges = rangeParser(file.length, range);
+            if (ranges === -1 || ranges === -2) {
+                global.torrentManager.releaseReference(torrent_hash);
+                return res.status(416).send('Invalid Range');
+            }
+
+            const { start, end } = ranges[0];
+            const chunksize = (end - start) + 1;
+
+            file.select();
+            
+            // Calculate which pieces this range needs
+            const startPiece = Math.floor(start / torrentInstance.pieceLength);
+            const endPiece = Math.floor(end / torrentInstance.pieceLength);
+            
+            // Prioritize additional pieces ahead for better buffering
+            const piecesToPrioritize = 10; 
+            const pieceEnd = Math.min(endPiece + piecesToPrioritize, torrentInstance.pieces.length - 1);
+            
+            // Use the torrent's piece selection API
+            torrentInstance.critical(startPiece, pieceEnd);
+
+            res.writeHead(206, {
+                "Content-Range": `bytes ${start}-${end}/${file.length}`,
+                "Accept-Ranges": "bytes",
+                "Content-Length": chunksize,
+                "Content-Type": "video/mp4"
             });
-            torrentClient.once('error', (err) => {
-                reject(err);
-            });
-        });
 
-        const file = torrentInstance.files.find(file => file.name.endsWith('.mp4'));
-        if (!file) {
-            if (torrentClient.get(torrentInstance.infoHash)) {
-                torrentClient.remove(torrentInstance.infoHash);
-            }
-            return res.status(404).json({ error: "MP4 file not found in torrent" });
-        }
+            const stream = file.createReadStream({ start, end });
+            let responded = false;
 
-        const range = req.headers.range;
-        if (!range) {
-            if (torrentClient.get(torrentInstance.infoHash)) {
-                torrentClient.remove(torrentInstance.infoHash);
-            }
-            return res.status(416).send('Requires Range header');
-        }
-
-        const ranges = rangeParser(file.length, range);
-        if (ranges === -1) {
-            if (torrentClient.get(torrentInstance.infoHash)) {
-                torrentClient.remove(torrentInstance.infoHash);
-            }
-            return res.status(416).send('Unsatisfiable Range');
-        }
-        if (ranges === -2) {
-            if (torrentClient.get(torrentInstance.infoHash)) {
-                torrentClient.remove(torrentInstance.infoHash);
-            }
-            return res.status(400).send('Malformed Range');
-        }
-
-        const { start, end } = ranges[0];
-        const chunksize = (end - start) + 1;
-
-        res.writeHead(206, {
-            "Content-Range": `bytes ${start}-${end}/${file.length}`,
-            "Accept-Ranges": "bytes",
-            "Content-Length": chunksize,
-            "Content-Type": "video/mp4",
-            "Cross-Origin-Resource-Policy": "cross-origin"
-        });
-
-        const stream = file.createReadStream({ start, end });
-        let responded = false;
-        let cleanupDone = false;
-
-        function cleanup() {
-            if (!cleanupDone) {
-                cleanupDone = true;
-                // Only remove if torrent still exists
-                if (torrentClient.get(torrentInstance.infoHash)) {
-                    torrentClient.remove(torrentInstance.infoHash);
+            stream.on('error', (streamErr) => {
+                if (!responded) {
+                    responded = true;
+                    res.status(500).json({ error: 'Stream error' });
                 }
-            }
+                global.torrentManager.releaseReference(torrent_hash);
+            });
+
+            stream.on('end', () => {
+                responded = true;
+                global.torrentManager.releaseReference(torrent_hash);
+            });
+
+            res.on('close', () => {
+                if (!responded) {
+                    responded = true;
+                }
+                if (!stream.destroyed) {
+                    stream.destroy();
+                }
+                global.torrentManager.releaseReference(torrent_hash);
+            });
+
+            stream.pipe(res);
+        } catch (torrentError) {
+            console.error("Torrent error:", torrentError);
+            return res.status(500).json({ error: "Failed to start streaming" });
         }
-
-        stream.on('error', (streamErr) => {
-            if (!responded) {
-                responded = true;
-                res.status(500).json({ error: 'Stream error' });
-            }
-            cleanup();
-        });
-
-        stream.on('end', () => {
-            responded = true;
-            cleanup();
-        });
-
-        res.on('close', () => {
-            if (!responded) {
-                responded = true;
-            }
-            if (!stream.destroyed) {
-                stream.destroy();
-            }
-            cleanup();
-        });
-
-        stream.pipe(res);
-
     } catch (err) {
+        console.error("Stream error:", err);
         if (!res.headersSent) {
             res.status(500).json({ error: err.message });
         }
@@ -251,7 +239,18 @@ app.get("/search", (req, res, next) => {
     try {
         const { default: WebTorrent } = await import('webtorrent');
         torrentClient = new WebTorrent();
-        torrentClient.setMaxListeners(20);
+        torrentClient.setMaxListeners(50); // Increased from 20
+        
+        // Initialize the torrent manager
+        const torrentManager = new TorrentManager(torrentClient);
+        
+        // Clean up idle torrents every 10 minutes
+        setInterval(() => {
+            torrentManager.cleanupIdleTorrents();
+        }, 10 * 60 * 1000);
+
+        // Make torrentManager available globally
+        global.torrentManager = torrentManager;
 
         // Continue with any other initialization before starting the server...
         ensureSchema().then(() => {
