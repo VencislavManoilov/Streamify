@@ -101,6 +101,17 @@ app.get("/movies/:imdb_code", (req, res, next) => {
     });
 });
 
+app.get("/categories", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, (req, res) => {
+    knex('categories').select('*').then(categories => {
+        res.json({ categories });
+    }).catch(err => {
+        res.status(500).json({ error: err.message });
+    });
+});
+
 app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;
 
