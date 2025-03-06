@@ -1,6 +1,9 @@
 <template>
     <div class="container" @click.self="$emit('close')">
         <div class="movie-details">
+            <button class="closeButton" v-on:click="$emit('close')">
+                <svg class="closeSvg" viewBox="0 0 122.878 122.88" enable-background="new 0 0 122.878 122.88"><g><path d="M1.426,8.313c-1.901-1.901-1.901-4.984,0-6.886c1.901-1.902,4.984-1.902,6.886,0l53.127,53.127l53.127-53.127 c1.901-1.902,4.984-1.902,6.887,0c1.901,1.901,1.901,4.985,0,6.886L68.324,61.439l53.128,53.128c1.901,1.901,1.901,4.984,0,6.886 c-1.902,1.902-4.985,1.902-6.887,0L61.438,68.326L8.312,121.453c-1.901,1.902-4.984,1.902-6.886,0 c-1.901-1.901-1.901-4.984,0-6.886l53.127-53.128L1.426,8.313L1.426,8.313z"/></g></svg>
+            </button>
             <div class="background-image" :style="{ backgroundImage: 'url(' + backgroundImage + ')' }"></div>
             <img :src="cover" alt="Movie Cover" class="cover" />
             <div class="content">
@@ -81,6 +84,27 @@ export default {
     /* max-width: 600px; */
     width: 100%;
     text-align: left;
+}
+
+.closeButton {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    margin: 12px;
+    border-radius: 24px;
+    border: none;
+    background-color: rgba(0, 0, 0, 0.363);
+    align-content: center;
+    cursor: pointer;
+}
+
+.closeSvg {
+    width: 20px;
+    height: 20px;
+    margin: auto;
+    align-self: center;
+    margin-top: 3px;
+    fill: rgb(238, 238, 238);
 }
 
 .title {
