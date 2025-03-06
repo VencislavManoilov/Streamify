@@ -251,7 +251,13 @@ async function loadCategories() {
     try {
         const load = await knex('categories').select('*');
         for(const category of load) {
-            const movies = await knex('movies').whereIn('imdb_code', category.movies);
+            category.movies = category.movies;
+            category.movies = category.movies.sort(() => Math.random() - 0.5);
+            const movies = [];
+            category.movies.map(async movie => {
+                const data = await knex('movies').where({ imdb_code: movie }).first();
+                movies.push(data);
+            });
             categories.push({ name: category.name, movies });
         }
         return categories;
