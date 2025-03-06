@@ -139,7 +139,7 @@ export default {
 
 .movies {
     display: flex;
-    flex-direction: row-reverse;
+    flex-direction: row;
     width: 100%;
     overflow-x: hidden;
 }
