@@ -1,23 +1,40 @@
 <template>
-    <div class="movie-details" v-if="movie">
-        <h1>{{ movie.title }}</h1>
-        <!-- <img :src="movie.large_cover_image" :alt="movie.title" class="movie-image" /> -->
-        <p>Rating: {{ movie.rating }}</p>
-        <p>Genres: {{ movie.genres.join(', ') }}</p>
-        <div v-if="movie.torrents && movie.torrents.length">
-            <div v-for="torrent in movie.torrents" :key="torrent.url">
-                <button @click="selectTorrent(torrent.hash)">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
+    <div class="movie">
+        <div class="header">
+            <button class="homeButton">
+                <router-link :to="'/'">
+                    <span>Home</span>
+                </router-link>
+            </button>
+
+            <div class="search-bar">
+                <input v-model="searchQuery" type="text" placeholder="Search for movies..." @keyup.enter="searchMovies" />
+                <button @click="searchMovies">Search</button>
             </div>
         </div>
-        <div class="video-container">
-            <video id="movie-player" class="video-js vjs-default-skin" controls>
-                <source v-if="videoSrc" :src="videoSrc" type="video/mp4" />
-                Your browser does not support the video tag.
-            </video>
-            <div v-if="!selectedTorrent" class="overlay">Select Resolution</div>
-            <div v-if="selectedTorrent && !isVideoLoaded" class="overlay loading">
-                <div class="spinner"></div>
+
+        <div class="movie-details" v-if="movie">
+    
+            <h1 class="title">{{ movie.title }}</h1>
+    
+            <div class="torrents" v-if="movie.torrents && movie.torrents.length">
+                <button :class="torrent.hash == selectedTorrent && 'selectedTorrent'" v-for="torrent in movie.torrents" :key="torrent.url" @click="selectTorrent(torrent.hash)">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
             </div>
+            
+            <div class="video-container">
+                <video id="movie-player" class="video-js vjs-default-skin" controls>
+                    <source v-if="videoSrc" :src="videoSrc" type="video/mp4" />
+                    Your browser does not support the video tag.
+                </video>
+                <div v-if="!selectedTorrent" class="overlay">Select Resolution</div>
+                <div v-if="selectedTorrent && !isVideoLoaded" class="overlay loading">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+    
+            <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> 10 / {{ movie.rating }}</p>
+            <p class="year">Year: {{ movie.year }}</p>
+            <p class="genres">Genres: {{ movie.genres.join(', ') }}</p>
         </div>
     </div>
 </template>
@@ -38,7 +55,8 @@ export default {
             isVideoLoaded: false,
             URL: URL,
             player: null,
-            loadError: null
+            loadError: null,
+            searchQuery: '',
         };
     },
     computed: {
@@ -79,17 +97,14 @@ export default {
                         
                         // Video.js event listeners
                         this.player.on('loadeddata', () => {
-                            console.log('Video data loaded');
                             this.isVideoLoaded = true;
                         });
                         
                         this.player.on('canplay', () => {
-                            console.log('Video can play now');
                             this.isVideoLoaded = true;
                         });
                         
                         this.player.on('playing', () => {
-                            console.log('Video is playing');
                             this.isVideoLoaded = true;
                         });
                         
@@ -110,7 +125,6 @@ export default {
             this.loadError = null;
 
             if (this.player) {
-                console.log('Setting new source:', this.videoSrc);
                 this.player.pause();
                 this.player.src({
                     type: 'video/mp4',
@@ -119,10 +133,8 @@ export default {
                 this.player.load();
                 setTimeout(() => {
                     if (!this.isVideoLoaded) {
-                        console.log('Attempting to force play');
                         this.player.play()
                             .then(() => {
-                                console.log('Playback started');
                                 this.isVideoLoaded = true;
                             })
                             .catch(error => {
@@ -131,7 +143,12 @@ export default {
                     }
                 }, 3000);
             }
-        }
+        },
+        searchMovies() {
+            if (this.searchQuery.trim() !== '') {
+                this.$router.push({ path: '/search', query: { query: this.searchQuery } });
+            }
+        },
     },
     beforeUnmount() {
         if (this.player) {
@@ -144,19 +161,112 @@ export default {
 <style scoped>
 @import 'video.js/dist/video-js.css';
 
+.movie {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100dvh;
+    align-items: center;
+}
+
+.header {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.homeButton {
+    margin: 24px 0px;
+    border: none;
+    background-color: #333;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.homeButton span {
+    color: #fff;
+    font-size: 1.1rem;
+}
+
+.homeButton:hover {
+    background-color: #555;
+}
+
+.search-bar {
+    margin: auto 0;
+}
+
+.search-bar input {
+    padding: 10px;
+    font-size: 16px;
+    width: 300px;
+    margin-right: 10px;
+}
+
+.search-bar button {
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
 .movie-details {
-    padding: 20px;
+    width: calc(100% - 40px);
+    padding: 0 20px;
+    max-width: 840px;
+    flex-grow: 1;
+    margin: 0 auto;
+    background-color: #111;
+}
+
+.torrents {
+    width: calc(100% - 4px);
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: start;
+    background-color: #222;
+    height: fit-content;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    overflow-x: hidden;
+    border: solid 2px black;
+}
+
+.torrents > button {
+    padding-left: 12px;
+    padding-right: 12px;
+    font-size: 1.3rem;
+    border: none;
+    border: solid 1px black;
+    height: 48px;
+    flex-grow: 1;
+}
+
+.torrents > button:first-child {
+    border-top-left-radius: 16px;
+}
+
+.selectedTorrent {
+    background-color: #333;
 }
 
 .movie {
-    max-width: 100%;
+    width: 100%;
+}
+
+.title {
+    margin-top: 24px;
 }
 
 .video-container {
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
-    margin-top: 24px;
 }
 
 .video-js {
@@ -189,6 +299,26 @@ export default {
     width: 40px;
     height: 40px;
     animation: spin 1s linear infinite;
+}
+
+.rating, .year, .genres {
+    margin: 0;
+}
+
+.rating {
+    display: flex;
+    flex-direction: row;
+    width: fit-content;
+    align-items: center;
+    gap: 3px;
+    font-size: 1.3rem;
+    margin-top: 24px;
+    margin-bottom: 24px;
+}
+
+.year, .genres {
+    font-size: 1.2rem;
+    margin-bottom: 6px;
 }
 
 @keyframes spin {
