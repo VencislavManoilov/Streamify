@@ -18,7 +18,7 @@
             <h1 class="title">{{ movie.title }}</h1>
     
             <div class="torrents" v-if="movie.torrents && movie.torrents.length">
-                <button :class="torrent.hash == selectedTorrent && 'selectedTorrent'" v-for="torrent in movie.torrents" :key="torrent.url" @click="selectTorrent(torrent.hash)">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
+                <button :class="torrent.hash == selectedTorrent && 'selectedTorrent'" v-for="torrent in movie.torrents" :key="torrent.url" @click="selectedTorrent != true && selectTorrent(torrent.hash)">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
             </div>
             
             <div class="video-container">
@@ -85,7 +85,7 @@ export default {
                     const videoElement = document.getElementById('movie-player');
                     if (videoElement) {
                         this.player = videojs(videoElement, {
-                            language: 'en', // explicitly set locale
+                            language: 'en',
                             playbackRates: [0.5, 1, 1.5, 2],
                             controlBar: {
                                 skipButtons: {
