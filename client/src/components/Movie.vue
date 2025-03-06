@@ -22,7 +22,7 @@
             </div>
             
             <div class="video-container">
-                <video id="movie-player" class="video-js vjs-default-skin" controls>
+                <video id="movie-player" :key="selectedTorrent" class="video-js vjs-default-skin" controls>
                     <source v-if="videoSrc" :src="videoSrc" type="video/mp4" />
                     Your browser does not support the video tag.
                 </video>

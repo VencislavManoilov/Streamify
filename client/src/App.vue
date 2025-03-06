@@ -22,4 +22,15 @@ body {
 a {
   text-decoration: none;
 }
+
+.vjs-fullscreen {
+  height: 100% !important;
+}
+.vjs-fullscreen .vjs-control-bar {
+  position: absolute !important;
+  bottom: 0 !important;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+}
 </style>
