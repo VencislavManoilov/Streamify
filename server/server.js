@@ -24,6 +24,8 @@ let torrentClient;
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
 
+let categories = [];
+
 async function uploadMovie(movie, type) {
     if (!movie.id) {
         return;
@@ -105,11 +107,11 @@ app.get("/categories", (req, res, next) => {
     req.knex = knex;
     next();
 }, Authorization, (req, res) => {
-    knex('categories').select('*').then(categories => {
-        res.json({ categories });
-    }).catch(err => {
-        res.status(500).json({ error: err.message });
-    });
+    try {
+        res.status(200).json(categories);
+    } catch (err) {
+        res.status(500).json({ error: "Internal server error" });
+    }
 });
 
 app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
@@ -245,6 +247,20 @@ app.get("/search", (req, res, next) => {
     }
 });
 
+async function loadCategories() {
+    try {
+        const load = await knex('categories').select('*');
+        for(const category of load) {
+            const movies = await knex('movies').whereIn('imdb_code', category.movies);
+            categories.push({ name: category.name, movies });
+        }
+        return categories;
+    } catch (dbError) {
+        console.error("Database error:", dbError);
+        return Promise.reject(dbError);
+    }
+}
+
 const fetchTrendingMovies = async () => {
     const trendingMovies = await axios.get(`https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
     const newMovies = await axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
@@ -323,7 +339,8 @@ const fetchTrendingMovies = async () => {
         global.torrentManager = torrentManager;
 
         // Continue with any other initialization before starting the server...
-        ensureSchema().then(() => {
+        ensureSchema().then(async () => {
+            await loadCategories();
             app.listen(PORT, () => {
                 console.log(`Server is running on port ${PORT}`);
             });

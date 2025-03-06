@@ -64,26 +64,7 @@ export default {
             }
         })
         .then(async (response) => {
-            let movieIds = response.data.categories;
-            let newCategories = [];
-            for(const category of movieIds) {
-                let newCategory = { name: category.name, movies: [] };
-                for(const movie of category.movies) {
-                    await axios.get(URL+`/movies/${movie}`, {
-                        headers: {
-                            Authorization: localStorage.getItem('token')
-                        }
-                    })
-                    .then(response => {
-                        newCategory.movies.push(response.data.movie);
-                    }).catch(error => {
-                        console.error('There was an error!', error);
-                    });
-                }
-                newCategories.push(newCategory);
-            }
-
-            this.categories = newCategories;
+            this.categories = response.data;
         }).catch(error => {
             console.error('There was an error!', error);
         });
