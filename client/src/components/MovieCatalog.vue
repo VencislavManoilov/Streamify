@@ -6,14 +6,11 @@
             <button @click="searchMovies">Search</button>
         </div>
         <div class="category" v-for="category in categories" :key="category.name">
-            <h2>{{ category.name }}</h2>
+            <h1>{{ category.name }}</h1>
             <div class="movies">
                 <div v-for="movie in category.movies" :key="movie.title" class="movie">
                     <router-link :to="'/movie/' + movie.imdb_code">
                         <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" />
-                        <h3>{{ movie.title }}</h3>
-                        <p>Rating: {{ movie.rating }}</p>
-                        <p>Genres: {{ movie.genres.join(', ') }}</p>
                     </router-link>
                 </div>
             </div>
@@ -77,7 +74,7 @@ export default {
 
 <style scoped>
 .search-bar {
-    margin-bottom: 20px;
+    margin: 20px;
 }
 
 .search-bar input {
@@ -100,20 +97,30 @@ export default {
     width: 100%;
 }
 
+.category > h1 {
+    margin-left: 12px;
+    margin-bottom: 6px;
+}
+
 .movies {
     display: flex;
     flex-direction: row;
     width: 100%;
     overflow-x: auto;
-    gap: 10px;
 }
+
 .movie {
     flex: 0 0 200px;
-    margin: 10px;
-    padding: 10px;
-    border: 1px solid #ccc;
+    margin-left: 12px;
+    margin-bottom: 6px;
+    padding: 0;
+    border: none;
     border-radius: 5px;
     text-align: center;
+}
+
+.movie > :last-child {
+    margin-right: 12px;
 }
 
 .movie-image {
