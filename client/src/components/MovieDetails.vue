@@ -113,6 +113,7 @@ export default {
     font-size: 3rem;
     margin: 0;
     margin-left: 24px;
+    max-width: 550px;
 }
 
 .play-button {

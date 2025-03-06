@@ -2,7 +2,7 @@
     <div class="home">
         <!-- Search input and button -->
         <div class="search-bar">
-            <input v-model="searchQuery" type="text" placeholder="Search for movies..." />
+            <input v-model="searchQuery" type="text" placeholder="Search for movies..." @keyup.enter="searchMovies" />
             <button @click="searchMovies">Search</button>
         </div>
         <div class="category" v-for="category in categories" :key="category.name">
@@ -139,7 +139,7 @@ export default {
 
 .movies {
     display: flex;
-    flex-direction: row;
+    flex-direction: row-reverse;
     width: 100%;
     overflow-x: hidden;
 }
