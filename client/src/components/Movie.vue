@@ -63,6 +63,9 @@ export default {
     computed: {
         videoSrc() {
             return this.selectedTorrent ? `${URL}/stream/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
+        },
+        isMobile() {
+            return window.innerWidth < 768;
         }
     },
     mounted() {
@@ -84,33 +87,45 @@ export default {
                 this.$nextTick(() => {
                     const videoElement = document.getElementById('movie-player');
                     if (videoElement) {
-                        this.player = new Plyr(videoElement, {
-                            controls: [
-                                'play-large', // The large play button in the center
-                                'restart', // Restart playback
-                                'rewind', // Rewind by 10 seconds
-                                'play', // Play/pause playback
-                                'fast-forward', // Fast forward by 10 seconds
-                                'progress', // The progress bar and scrubber
-                                'current-time', // The current time display
-                                'duration', // The full duration display
-                                'mute', // Toggle mute
-                                'volume', // Volume control
-                                'captions', // Toggle captions
-                                'settings', // Settings menu
-                                'fullscreen' // Toggle fullscreen
-                            ],
-                            seekTime: 10, // Set the seek time to 10 seconds for forward/backward skips
-                        });
-                        // Set event listeners on the underlying video element
-                        videoElement.addEventListener('playing', () => {
-                            this.isVideoLoaded = true;
-                        });
-                        videoElement.addEventListener('error', (event) => {
-                            console.error('Video error:', event);
-                            this.loadError = 'Failed to load video';
-                            this.isVideoLoaded = false;
-                        });
+                        if (!this.isMobile) {
+                            this.player = new Plyr(videoElement, {
+                                controls: [
+                                    'play-large', // The large play button in the center
+                                    'restart', // Restart playback
+                                    'rewind', // Rewind by 10 seconds
+                                    'play', // Play/pause playback
+                                    'fast-forward', // Fast forward by 10 seconds
+                                    'progress', // The progress bar and scrubber
+                                    'current-time', // The current time display
+                                    'duration', // The full duration display
+                                    'mute', // Toggle mute
+                                    'volume', // Volume control
+                                    'captions', // Toggle captions
+                                    'settings', // Settings menu
+                                    'fullscreen' // Toggle fullscreen
+                                ],
+                                seekTime: 10, // Set the seek time to 10 seconds for forward/backward skips
+                            });
+                            // Set event listeners on the underlying video element
+                            videoElement.addEventListener('playing', () => {
+                                this.isVideoLoaded = true;
+                            });
+                            videoElement.addEventListener('error', (event) => {
+                                console.error('Video error:', event);
+                                this.loadError = 'Failed to load video';
+                                this.isVideoLoaded = false;
+                            });
+                        } else {
+                            // For mobile, use the native video element
+                            videoElement.addEventListener('playing', () => {
+                                this.isVideoLoaded = true;
+                            });
+                            videoElement.addEventListener('error', (event) => {
+                                console.error('Video error:', event);
+                                this.loadError = 'Failed to load video';
+                                this.isVideoLoaded = false;
+                            });
+                        }
                     }
                 });
             }
@@ -121,23 +136,39 @@ export default {
             this.selectedTorrent = torrentHash;
             this.isVideoLoaded = false;
             this.loadError = null;
-            if (this.player) {
-                this.player.pause();
-                // Update source using Plyr API
-                this.player.source = {
-                    type: 'video',
-                    sources: [
-                        {
-                            src: this.videoSrc,
-                            type: 'video/mp4'
-                        }
-                    ]
-                };
-                this.player.play().then(() => {
-                    this.isVideoLoaded = true;
-                }).catch(error => {
-                    console.error('Error playing video:', error);
-                });
+            if (!this.isMobile) {
+                if (this.player) {
+                    this.player.pause();
+                    // Update source using Plyr API
+                    this.player.source = {
+                        type: 'video',
+                        sources: [
+                            {
+                                src: this.videoSrc,
+                                type: 'video/mp4'
+                            }
+                        ]
+                    };
+                    this.player.play().then(() => {
+                        this.isVideoLoaded = true;
+                    }).catch(error => {
+                        console.error('Error playing video:', error);
+                    });
+                }
+            } else {
+                const videoElement = document.getElementById('movie-player');
+                if (videoElement) {
+                    const sourceElement = videoElement.querySelector('source');
+                    if (sourceElement) {
+                        sourceElement.setAttribute('src', this.videoSrc);
+                    }
+                    videoElement.load();
+                    videoElement.play().then(() => {
+                        this.isVideoLoaded = true;
+                    }).catch(error => {
+                        console.error('Error playing video:', error);
+                    });
+                }
             }
         },
         searchMovies() {
