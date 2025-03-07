@@ -259,8 +259,8 @@ export default {
     justify-content: start;
     background-color: #222;
     height: fit-content;
-    border-top-left-radius: 16px;
-    border-top-right-radius: 16px;
+    border-top-left-radius: 24px;
+    border-top-right-radius: 24px;
     overflow-x: hidden;
     border: solid 2px black;
 }
@@ -273,10 +273,6 @@ export default {
     border: solid 1px black;
     height: 48px;
     flex-grow: 1;
-}
-
-.torrents > button:first-child {
-    border-top-left-radius: 16px;
 }
 
 .selectedTorrent {
