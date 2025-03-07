@@ -366,9 +366,16 @@ async function getSeriesWithMagnets(imdbID) {
 
         let totalSeasons = parseInt(seriesData.totalSeasons, 10);
         let seriesDetails = {
+            imdbID: imdbID,
             title: seriesData.Title,
             year: seriesData.Year,
             genre: seriesData.Genre,
+            released: seriesData.Released,
+            rating: seriesData.imdbRating,
+            plot: seriesData.Plot,
+            poster: seriesData.Poster,
+            director: seriesData.Director,
+            actors: JSON.stringify(seriesData.Actors.split(", ")), // Convert actors to JSON array
             totalSeasons: totalSeasons,
             seasons: []
         };
@@ -390,6 +397,7 @@ async function getSeriesWithMagnets(imdbID) {
                     let magnet = torrents[season]?.[episodeNumber] || "No magnet found.";
 
                     seasonDetails.episodes.push({
+                        imdb_code: episode.imdbID,
                         title: episode.Title,
                         released: episode.Released,
                         episode: episodeNumber,
@@ -399,6 +407,64 @@ async function getSeriesWithMagnets(imdbID) {
                 }
 
                 seriesDetails.seasons.push(seasonDetails);
+            }
+        }
+
+        // Save series details to the database
+        const existingSeries = await knex('series').where({ imdb_code: imdbID }).first();
+        if (existingSeries) {
+            await knex('series').where({ imdb_code: imdbID }).update({
+                imdb_code: imdbID,
+                title: seriesDetails.title,
+                genre: seriesDetails.genre,
+                year: seriesDetails.year,
+                released: seriesDetails.released,
+                rating: seriesDetails.rating,
+                plot: seriesDetails.plot,
+                poster: seriesDetails.poster,
+                seasons: JSON.stringify(seriesDetails.seasons.map(season => season.episodes.map(episode => episode.imdb_code))), // Convert seasons to JSON array of episode IMDb codes
+                director: seriesDetails.director,
+                actors: seriesDetails.actors
+            });
+        } else {
+            await knex('series').insert({
+                imdb_code: imdbID,
+                title: seriesDetails.title,
+                genre: seriesDetails.genre,
+                year: seriesDetails.year,
+                released: seriesDetails.released,
+                rating: seriesDetails.rating,
+                plot: seriesDetails.plot,
+                poster: seriesDetails.poster,
+                seasons: JSON.stringify(seriesDetails.seasons.map(season => season.episodes.map(episode => episode.imdb_code))), // Convert seasons to JSON array of episode IMDb codes
+                director: seriesDetails.director,
+                actors: seriesDetails.actors
+            });
+        }
+
+        // Save episodes details to the database
+        for (const season of seriesDetails.seasons) {
+            for (const episode of season.episodes) {
+                const existingEpisode = await knex('episodes').where({ imdb_code: episode.imdb_code }).first();
+                if (existingEpisode) {
+                    await knex('episodes').where({ imdb_code: episode.imdb_code }).update({
+                        imdb_code: episode.imdb_code,
+                        title: episode.title,
+                        released: episode.released,
+                        episode: episode.episode,
+                        rating: episode.imdbRating,
+                        magnet: episode.magnet,
+                    });
+                } else {
+                    await knex('episodes').insert({
+                        imdb_code: episode.imdb_code,
+                        title: episode.title,
+                        released: episode.released,
+                        episode: episode.episode,
+                        rating: episode.imdbRating,
+                        magnet: episode.magnet,
+                    });
+                }
             }
         }
 
@@ -437,6 +503,9 @@ async function getSeriesWithMagnets(imdbID) {
         // Continue with any other initialization before starting the server...
         ensureSchema().then(async () => {
             await loadCategories();
+
+            console.log(await getSeriesWithMagnets("tt0944947")); 
+
             app.listen(PORT, () => {
                 console.log(`Server is running on port ${PORT}`);
             });

@@ -35,8 +35,8 @@ const schemaDefinition = {
     id: { type: 'increments', primary: true },
     imdb_code: { type: 'string', unique: true, notNullable: true },
     title: { type: 'string', notNullable: true },
-    genre: { type: 'json', notNullable: true },
-    year: { type: 'integer', notNullable: true },
+    genre: { type: 'string', notNullable: true },
+    year: { type: 'string', notNullable: true },
     released: { type: 'string', notNullable: true },
     rating: { type: 'float', notNullable: true },
     plot: { type: 'string', notNullable: true },
@@ -52,7 +52,7 @@ const schemaDefinition = {
     title: { type: 'string', notNullable: true },
     released: { type: 'string', notNullable: true },
     episode: { type: 'integer', notNullable: true },
-    rating: { type: 'float', notNullable: true },
+    rating: { type: 'string', notNullable: true },
     magnet: { type: 'string', notNullable: true },
   }
 };
