@@ -30,6 +30,30 @@ const schemaDefinition = {
     name: { type: 'string', unique: true, notNullable: true },
     movies: { type: 'json', notNullable: true },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  series: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', unique: true, notNullable: true },
+    title: { type: 'string', notNullable: true },
+    genre: { type: 'json', notNullable: true },
+    year: { type: 'integer', notNullable: true },
+    released: { type: 'string', notNullable: true },
+    rating: { type: 'float', notNullable: true },
+    plot: { type: 'string', notNullable: true },
+    poster: { type: 'string', notNullable: true },
+    seasons: { type: 'json', notNullable: true },
+    director: { type: 'string', notNullable: true },
+    actors: { type: 'json', notNullable: true },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  episodes: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', unique: true, notNullable: true },
+    title: { type: 'string', notNullable: true },
+    released: { type: 'string', notNullable: true },
+    episode: { type: 'integer', notNullable: true },
+    rating: { type: 'float', notNullable: true },
+    magnet: { type: 'string', notNullable: true },
   }
 };
 
