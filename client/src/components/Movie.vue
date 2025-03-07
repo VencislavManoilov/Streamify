@@ -41,8 +41,9 @@
 
 <script>
 import axios from 'axios';
-import videojs from 'video.js';
-import 'video.js/dist/video-js.css';
+import Plyr from 'plyr';
+import 'plyr/dist/plyr.css';
+import 'plyr/dist/plyr.polyfilled.js';
 
 const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
 
@@ -78,38 +79,35 @@ export default {
         });
     },
     watch: {
-        // Initialize video.js after movie is loaded and the video element is rendered
         movie(newVal) {
             if (newVal) {
                 this.$nextTick(() => {
                     const videoElement = document.getElementById('movie-player');
                     if (videoElement) {
-                        this.player = videojs(videoElement, {
-                            language: 'en',
-                            playbackRates: [0.5, 1, 1.5, 2],
-                            controlBar: {
-                                skipButtons: {
-                                    forward: 10,
-                                    backward: 10
-                                }
-                            }
+                        this.player = new Plyr(videoElement, {
+                            controls: [
+                                'play-large', // The large play button in the center
+                                'restart', // Restart playback
+                                'rewind', // Rewind by 10 seconds
+                                'play', // Play/pause playback
+                                'fast-forward', // Fast forward by 10 seconds
+                                'progress', // The progress bar and scrubber
+                                'current-time', // The current time display
+                                'duration', // The full duration display
+                                'mute', // Toggle mute
+                                'volume', // Volume control
+                                'captions', // Toggle captions
+                                'settings', // Settings menu
+                                'fullscreen' // Toggle fullscreen
+                            ],
+                            seekTime: 10, // Set the seek time to 10 seconds for forward/backward skips
                         });
-                        
-                        // Video.js event listeners
-                        this.player.on('loadeddata', () => {
+                        // Set event listeners on the underlying video element
+                        videoElement.addEventListener('playing', () => {
                             this.isVideoLoaded = true;
                         });
-                        
-                        this.player.on('canplay', () => {
-                            this.isVideoLoaded = true;
-                        });
-                        
-                        this.player.on('playing', () => {
-                            this.isVideoLoaded = true;
-                        });
-                        
-                        this.player.on('error', () => {
-                            console.error('Video error:', this.player.error());
+                        videoElement.addEventListener('error', (event) => {
+                            console.error('Video error:', event);
                             this.loadError = 'Failed to load video';
                             this.isVideoLoaded = false;
                         });
@@ -123,25 +121,23 @@ export default {
             this.selectedTorrent = torrentHash;
             this.isVideoLoaded = false;
             this.loadError = null;
-
             if (this.player) {
                 this.player.pause();
-                this.player.src({
-                    type: 'video/mp4',
-                    src: this.videoSrc
+                // Update source using Plyr API
+                this.player.source = {
+                    type: 'video',
+                    sources: [
+                        {
+                            src: this.videoSrc,
+                            type: 'video/mp4'
+                        }
+                    ]
+                };
+                this.player.play().then(() => {
+                    this.isVideoLoaded = true;
+                }).catch(error => {
+                    console.error('Error playing video:', error);
                 });
-                this.player.load();
-                setTimeout(() => {
-                    if (!this.isVideoLoaded) {
-                        this.player.play()
-                            .then(() => {
-                                this.isVideoLoaded = true;
-                            })
-                            .catch(error => {
-                                console.error('Error playing video:', error);
-                            });
-                    }
-                }, 3000);
             }
         },
         searchMovies() {
@@ -152,7 +148,8 @@ export default {
     },
     beforeUnmount() {
         if (this.player) {
-            this.player.dispose();
+            // Use Plyr's destroy method
+            this.player.destroy();
         }
     }
 };
