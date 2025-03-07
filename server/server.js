@@ -8,6 +8,7 @@ const cors = require('cors');
 const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
+const cheerio = require("cheerio");
 
 const PORT = 8080;
 
@@ -23,6 +24,7 @@ let torrentClient;
 
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
+const EZTV_URL = "https://eztv.re/search/imdb/";
 
 let categories = [];
 
@@ -318,6 +320,94 @@ const fetchTrendingMovies = async () => {
 
     return console.log("Fetched movies for categories!");
 };
+
+// Fetch all torrents for the given IMDb ID from EZTV (Single Request)
+async function getAllEpisodeMagnets(imdbID) {
+    try {
+        const url = `${EZTV_URL}${imdbID}`;
+        const { data } = await axios.get(url);
+        const $ = cheerio.load(data);
+
+        let magnets = {};
+
+        $("tr.forum_header_border").each((_, element) => {
+            const title = $(element).find("a.epinfo").text();
+            const magnet = $(element).find("a.magnet").attr("href");
+
+            if (magnet) {
+                const match = title.match(/S(\d{2})E(\d{2})/i);
+                if (match) {
+                    let season = parseInt(match[1], 10);
+                    let episode = parseInt(match[2], 10);
+
+                    if (!magnets[season]) magnets[season] = {};
+                    magnets[season][episode] = magnet;
+                }
+            }
+        });
+
+        return magnets;
+    } catch (error) {
+        console.error(`Error fetching EZTV torrents:`, error);
+        return {};
+    }
+}
+
+// Fetch series info & episodes from OMDB + Match with EZTV magnets
+async function getSeriesWithMagnets(imdbID) {
+    try {
+        // Step 1: Get Series Info from OMDB
+        let seriesRes = await axios.get(`${OMDB_URL}?i=${imdbID}&apikey=${OMDB_API_KEY}&type=series`);
+        let seriesData = seriesRes.data;
+
+        if (seriesData.Response === "False") {
+            return "Series not found.";
+        }
+
+        let totalSeasons = parseInt(seriesData.totalSeasons, 10);
+        let seriesDetails = {
+            title: seriesData.Title,
+            year: seriesData.Year,
+            genre: seriesData.Genre,
+            totalSeasons: totalSeasons,
+            seasons: []
+        };
+
+        // Step 2: Get All Torrents from EZTV (Single Request)
+        let torrents = await getAllEpisodeMagnets(imdbID);
+
+        // Step 3: Fetch Each Season's Episodes from OMDB & Match with Magnets
+        for (let season = 1; season <= totalSeasons; season++) {
+            let seasonRes = await axios.get(`${OMDB_URL}?i=${imdbID}&Season=${season}&apikey=${OMDB_API_KEY}`);
+            if (seasonRes.data.Response === "True") {
+                let seasonDetails = {
+                    season: season,
+                    episodes: []
+                };
+
+                for (let episode of seasonRes.data.Episodes) {
+                    let episodeNumber = parseInt(episode.Episode, 10);
+                    let magnet = torrents[season]?.[episodeNumber] || "No magnet found.";
+
+                    seasonDetails.episodes.push({
+                        title: episode.Title,
+                        released: episode.Released,
+                        episode: episodeNumber,
+                        imdbRating: episode.imdbRating,
+                        magnet: magnet
+                    });
+                }
+
+                seriesDetails.seasons.push(seasonDetails);
+            }
+        }
+
+        return seriesDetails;
+    } catch (error) {
+        console.error("Error:", error);
+        return null;
+    }
+}
 
 // Dynamically import WebTorrent and initialize torrentClient before starting the server
 (async () => {
