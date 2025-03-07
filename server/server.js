@@ -24,7 +24,7 @@ let torrentClient;
 
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
-const EZTV_URL = "https://eztv.re/search/imdb/";
+const EZTV_URL = "https://eztvx.to/search/";
 
 let categories = [];
 
@@ -325,27 +325,37 @@ const fetchTrendingMovies = async () => {
 async function getAllEpisodeMagnets(imdbID) {
     try {
         const url = `${EZTV_URL}${imdbID}`;
+        console.log(`Fetching torrents from URL: ${url}`);
         const { data } = await axios.get(url);
         const $ = cheerio.load(data);
 
         let magnets = {};
+        let count = 0;
 
         $("tr.forum_header_border").each((_, element) => {
             const title = $(element).find("a.epinfo").text();
             const magnet = $(element).find("a.magnet").attr("href");
 
-            if (magnet) {
-                const match = title.match(/S(\d{2})E(\d{2})/i);
+            if (magnet && title) {
+                // Try multiple regex patterns for different title formats
+                let match = title.match(/S(\d{1,2})E(\d{1,2})/i);              // S01E01 format
+                if (!match) match = title.match(/(\d{1,2})x(\d{1,2})/);        // 1x01 format
+                if (!match) match = title.match(/Season\s*(\d{1,2}).*?Episode\s*(\d{1,2})/i); // "Season 1 Episode 1" format
+                
                 if (match) {
                     let season = parseInt(match[1], 10);
                     let episode = parseInt(match[2], 10);
-
+                    
                     if (!magnets[season]) magnets[season] = {};
                     magnets[season][episode] = magnet;
+                    count++;
+                } else {
+                    console.log(`Could not parse S/E from title: ${title}`);
                 }
             }
         });
 
+        console.log(`Found ${count} torrents for IMDb ID: ${imdbID}`);
         return magnets;
     } catch (error) {
         console.error(`Error fetching EZTV torrents:`, error);
@@ -364,6 +374,15 @@ async function getSeriesWithMagnets(imdbID) {
             return "Series not found.";
         }
 
+        // Step 2: Get All Torrents from EZTV (Single Request)
+        console.log(`Fetching magnets for series: ${seriesData.Title} (${imdbID})`);
+        let torrents = await getAllEpisodeMagnets(imdbID);
+        
+        // Log the fetched torrents structure for debugging
+        console.log("Torrents structure:", Object.keys(torrents).map(season => 
+            `Season ${season}: ${Object.keys(torrents[season]).length} episodes`
+        ));
+
         let totalSeasons = parseInt(seriesData.totalSeasons, 10);
         let seriesDetails = {
             imdbID: imdbID,
@@ -380,9 +399,6 @@ async function getSeriesWithMagnets(imdbID) {
             seasons: []
         };
 
-        // Step 2: Get All Torrents from EZTV (Single Request)
-        let torrents = await getAllEpisodeMagnets(imdbID);
-
         // Step 3: Fetch Each Season's Episodes from OMDB & Match with Magnets
         for (let season = 1; season <= totalSeasons; season++) {
             let seasonRes = await axios.get(`${OMDB_URL}?i=${imdbID}&Season=${season}&apikey=${OMDB_API_KEY}`);
@@ -395,7 +411,7 @@ async function getSeriesWithMagnets(imdbID) {
                 for (let episode of seasonRes.data.Episodes) {
                     let episodeNumber = parseInt(episode.Episode, 10);
                     let magnet = torrents[season]?.[episodeNumber] || "No magnet found.";
-
+                    
                     seasonDetails.episodes.push({
                         imdb_code: episode.imdbID,
                         title: episode.Title,
