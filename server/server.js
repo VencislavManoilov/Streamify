@@ -8,7 +8,6 @@ const cors = require('cors');
 const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
-const cheerio = require("cheerio");
 
 const PORT = 8080;
 
@@ -24,7 +23,6 @@ let torrentClient;
 
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
-const EZTV_URL = "https://eztvx.to/search/";
 
 let categories = [];
 
@@ -321,176 +319,6 @@ const fetchTrendingMovies = async () => {
     return console.log("Fetched movies for categories!");
 };
 
-// Fetch all torrents for the given IMDb ID from EZTV (Single Request)
-async function getAllEpisodeMagnets(imdbID) {
-    try {
-        const url = `${EZTV_URL}${imdbID}`;
-        console.log(`Fetching torrents from URL: ${url}`);
-        const { data } = await axios.get(url);
-        const $ = cheerio.load(data);
-
-        let magnets = {};
-        let count = 0;
-
-        $("tr.forum_header_border").each((_, element) => {
-            const title = $(element).find("a.epinfo").text();
-            const magnet = $(element).find("a.magnet").attr("href");
-
-            if (magnet && title) {
-                // Try multiple regex patterns for different title formats
-                let match = title.match(/S(\d{1,2})E(\d{1,2})/i);              // S01E01 format
-                if (!match) match = title.match(/(\d{1,2})x(\d{1,2})/);        // 1x01 format
-                if (!match) match = title.match(/Season\s*(\d{1,2}).*?Episode\s*(\d{1,2})/i); // "Season 1 Episode 1" format
-                
-                if (match) {
-                    let season = parseInt(match[1], 10);
-                    let episode = parseInt(match[2], 10);
-                    
-                    if (!magnets[season]) magnets[season] = {};
-                    magnets[season][episode] = magnet;
-                    count++;
-                } else {
-                    console.log(`Could not parse S/E from title: ${title}`);
-                }
-            }
-        });
-
-        console.log(`Found ${count} torrents for IMDb ID: ${imdbID}`);
-        return magnets;
-    } catch (error) {
-        console.error(`Error fetching EZTV torrents:`, error);
-        return {};
-    }
-}
-
-// Fetch series info & episodes from OMDB + Match with EZTV magnets
-async function getSeriesWithMagnets(imdbID) {
-    try {
-        // Step 1: Get Series Info from OMDB
-        let seriesRes = await axios.get(`${OMDB_URL}?i=${imdbID}&apikey=${OMDB_API_KEY}&type=series`);
-        let seriesData = seriesRes.data;
-
-        if (seriesData.Response === "False") {
-            return "Series not found.";
-        }
-
-        // Step 2: Get All Torrents from EZTV (Single Request)
-        console.log(`Fetching magnets for series: ${seriesData.Title} (${imdbID})`);
-        let torrents = await getAllEpisodeMagnets(imdbID);
-        
-        // Log the fetched torrents structure for debugging
-        console.log("Torrents structure:", Object.keys(torrents).map(season => 
-            `Season ${season}: ${Object.keys(torrents[season]).length} episodes`
-        ));
-
-        let totalSeasons = parseInt(seriesData.totalSeasons, 10);
-        let seriesDetails = {
-            imdbID: imdbID,
-            title: seriesData.Title,
-            year: seriesData.Year,
-            genre: seriesData.Genre,
-            released: seriesData.Released,
-            rating: seriesData.imdbRating,
-            plot: seriesData.Plot,
-            poster: seriesData.Poster,
-            director: seriesData.Director,
-            actors: JSON.stringify(seriesData.Actors.split(", ")), // Convert actors to JSON array
-            totalSeasons: totalSeasons,
-            seasons: []
-        };
-
-        // Step 3: Fetch Each Season's Episodes from OMDB & Match with Magnets
-        for (let season = 1; season <= totalSeasons; season++) {
-            let seasonRes = await axios.get(`${OMDB_URL}?i=${imdbID}&Season=${season}&apikey=${OMDB_API_KEY}`);
-            if (seasonRes.data.Response === "True") {
-                let seasonDetails = {
-                    season: season,
-                    episodes: []
-                };
-
-                for (let episode of seasonRes.data.Episodes) {
-                    let episodeNumber = parseInt(episode.Episode, 10);
-                    let magnet = torrents[season]?.[episodeNumber] || "No magnet found.";
-                    
-                    seasonDetails.episodes.push({
-                        imdb_code: episode.imdbID,
-                        title: episode.Title,
-                        released: episode.Released,
-                        episode: episodeNumber,
-                        imdbRating: episode.imdbRating,
-                        magnet: magnet
-                    });
-                }
-
-                seriesDetails.seasons.push(seasonDetails);
-            }
-        }
-
-        // Save series details to the database
-        const existingSeries = await knex('series').where({ imdb_code: imdbID }).first();
-        if (existingSeries) {
-            await knex('series').where({ imdb_code: imdbID }).update({
-                imdb_code: imdbID,
-                title: seriesDetails.title,
-                genre: seriesDetails.genre,
-                year: seriesDetails.year,
-                released: seriesDetails.released,
-                rating: seriesDetails.rating,
-                plot: seriesDetails.plot,
-                poster: seriesDetails.poster,
-                seasons: JSON.stringify(seriesDetails.seasons.map(season => season.episodes.map(episode => episode.imdb_code))), // Convert seasons to JSON array of episode IMDb codes
-                director: seriesDetails.director,
-                actors: seriesDetails.actors
-            });
-        } else {
-            await knex('series').insert({
-                imdb_code: imdbID,
-                title: seriesDetails.title,
-                genre: seriesDetails.genre,
-                year: seriesDetails.year,
-                released: seriesDetails.released,
-                rating: seriesDetails.rating,
-                plot: seriesDetails.plot,
-                poster: seriesDetails.poster,
-                seasons: JSON.stringify(seriesDetails.seasons.map(season => season.episodes.map(episode => episode.imdb_code))), // Convert seasons to JSON array of episode IMDb codes
-                director: seriesDetails.director,
-                actors: seriesDetails.actors
-            });
-        }
-
-        // Save episodes details to the database
-        for (const season of seriesDetails.seasons) {
-            for (const episode of season.episodes) {
-                const existingEpisode = await knex('episodes').where({ imdb_code: episode.imdb_code }).first();
-                if (existingEpisode) {
-                    await knex('episodes').where({ imdb_code: episode.imdb_code }).update({
-                        imdb_code: episode.imdb_code,
-                        title: episode.title,
-                        released: episode.released,
-                        episode: episode.episode,
-                        rating: episode.imdbRating,
-                        magnet: episode.magnet,
-                    });
-                } else {
-                    await knex('episodes').insert({
-                        imdb_code: episode.imdb_code,
-                        title: episode.title,
-                        released: episode.released,
-                        episode: episode.episode,
-                        rating: episode.imdbRating,
-                        magnet: episode.magnet,
-                    });
-                }
-            }
-        }
-
-        return seriesDetails;
-    } catch (error) {
-        console.error("Error:", error);
-        return null;
-    }
-}
-
 // Dynamically import WebTorrent and initialize torrentClient before starting the server
 (async () => {
     // try {
@@ -519,8 +347,6 @@ async function getSeriesWithMagnets(imdbID) {
         // Continue with any other initialization before starting the server...
         ensureSchema().then(async () => {
             await loadCategories();
-
-            console.log(await getSeriesWithMagnets("tt0944947")); 
 
             app.listen(PORT, () => {
                 console.log(`Server is running on port ${PORT}`);
