@@ -168,18 +168,27 @@ export default {
     }
 
     .cover {
-        display: none;
+        width: 150px;
+        transform: translateY(50%);
+        /* align-self: flex-start; */
     }
 
     .title {
         position: static;
         transform: none;
         margin: 24px;
+        margin-top: 92px;
     }
 
     .play-button {
         margin-left: 24px;
         margin-top: 0;
+        width: calc(100% - 48px);
+        height: 48px;
+    }
+    
+    .play-button span {
+        font-size: 1.5rem;
     }
 }
 </style>
