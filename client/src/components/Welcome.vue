@@ -3,22 +3,18 @@
         <h1>Welcome to Streamify</h1>
         <div class="button-group">
             <button v-on:click="login = true">Login</button>
-            <button v-on:click="register = true">Register</button>
         </div>
     </div>
-    <Login v-if="login" @openRegister="openRegister" @close="handleOutsideClick" />
-    <Register v-if="register" @openLogin="openLogin" @close="handleOutsideClick" />
+    <Login v-if="login" @close="handleOutsideClick" />
 </template>
 
 <script>
 import Login from './Login.vue';
-import Register from './Register.vue';
 
 export default {
     name: 'WelcomePage',
     components: {
         Login,
-        Register
     },
     data() {
         return {
@@ -36,10 +32,6 @@ export default {
         openLogin() {
             this.register = false;
             this.login = true;
-        },
-        openRegister() {
-            this.login = false;
-            this.register = true;
         }
     }
 }

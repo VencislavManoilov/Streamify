@@ -11,7 +11,6 @@
                     <label for="password">Password:</label>
                     <input type="password" id="password" v-model="password" required />
                 </div>
-                <p>Don't have an account? <a v-on:click="$emit('openRegister')">Register</a></p>
                 <button type="submit">Login</button>
             </form>
         </div>
