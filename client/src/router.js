@@ -4,6 +4,7 @@ import Home from './components/Home.vue';
 import Search from './components/Search.vue';
 import Auth from './components/Admin/Auth.vue';
 import Panel from './components/Admin/Panel.vue';
+import Register from './components/Register.vue';
 
 const routes = [
     {
@@ -34,6 +35,11 @@ const routes = [
         path: '/admin/panel',
         name: 'AdminPanel',
         component: Panel
+    },
+    {
+        path: '/register/:token',
+        name: 'Register',
+        component: Register
     }
 ];
 
