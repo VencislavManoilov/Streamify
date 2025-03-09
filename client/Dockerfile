@@ -7,6 +7,13 @@ RUN npm install
 
 COPY . .
 
+# Build the Vue.js application
+RUN npm run build
+
+# Install a simple static file server to serve the built files
+RUN npm install -g serve
+
 EXPOSE 3000
 
-CMD ["npm", "run", "serve"]
+# Serve the built files
+CMD ["serve", "-s", "dist"]
