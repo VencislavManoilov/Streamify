@@ -5,31 +5,6 @@ const Authorization = require('../middleware/Auth');
 
 const router = express.Router();
 
-// Register route
-router.post('/register', async (req, res) => {
-    const { username, email, password } = req.body;
-    if(!username || !password || !email) {
-        return res.status(400).send('Username, email and password are required');
-    }
-
-    // Check if user already exists
-    const existingUser = await req.knex('users').where({ email });
-
-    if(existingUser.length) {
-        return res.status(400).send('Email already exists');
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = { username, email, password: hashedPassword };
-    
-    try {
-        await req.knex('users').insert(user);
-        res.status(200).send('User registered');
-    } catch(err) {
-        res.status(400).send('Error registering user');
-    }
-});
-
 // Login route
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;

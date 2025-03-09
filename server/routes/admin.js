@@ -1,8 +1,20 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const nodemailer = require('nodemailer'); // added
 
 const router = express.Router();
+
+// Updated transporter configuration for SendGrid SMTP
+const transporter = nodemailer.createTransport({
+    host: 'smtp.sendgrid.net',
+    port: 587,
+    secure: false,
+    auth: {
+        user: 'apikey', // literally the string "apikey"
+        pass: process.env.SENDGRID_API_KEY
+    }
+});
 
 const Authorization = async (req, res, next) => {
     const token = req.headers.authorization;
@@ -101,6 +113,70 @@ router.get('/me', Authorization, async (req, res) => {
     }
 
     res.json({ user: req.user });
+});
+
+router.post('/invite', Authorization, async (req, res) => {
+    const { email } = req.body;
+
+    if(!email) {
+        return res.status(400).send('Email is required');
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: 'Invalid email' });
+    }
+
+    const user = req.knex('users').where({ email }).first();
+    if(user.length > 0) {
+        return res.status(400).json({ message: 'User already exists' });
+    }
+
+    const token = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1d' });
+
+    // Send email using nodemailer
+    const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'Invitation to join Streamify',
+        text: `Please accept the invitation from ${req.user.username} and join our platform. Open this link http://localhost:3000/register/${token}`,
+        html: `
+            <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                <h2 style="color: #333;">You're Invited to Join Streamify!</h2>
+                <p>
+                    Hello,
+                </p>
+                <p>
+                    You have been invited by <strong>${req.user.username}</strong> to join our platform. We are excited to have you on board!
+                </p>
+                <p>
+                    Please click the button below to accept the invitation and complete your registration.
+                </p>
+                <p style="text-align: center;">
+                    <a href="http://localhost:3000/register/${token}" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Join Streamify</a>
+                </p>
+                <p>
+                    If the button above does not work, please copy and paste the following link into your web browser:
+                </p>
+                <p>
+                    <a href="http://localhost:3000/register/${token}">http://localhost:3000/register/${token}</a>
+                </p>
+                <p>
+                    Best regards,<br>
+                    The Streamify Team
+                </p>
+            </div>
+        `
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+        if(error){
+            console.error(error);
+            return res.status(500).json({ message: 'Error sending email' });
+        }
+        return res.status(200).json({ message: 'Email sent' });
+    });
 });
 
 module.exports = router;
