@@ -6,6 +6,7 @@ const schemaDefinition = {
     username: { type: 'string', notNullable: true },
     email: { type: 'string', unique: true, notNullable: true },
     password: { type: 'string', notNullable: true },
+    role: { type: 'string', defaultTo: 'user' },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   },
   movies: {

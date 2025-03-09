@@ -69,6 +69,12 @@ app.get("/", (req, res) => {
     });
 })
 
+const adminRoute = require('./routes/admin');
+app.use('/admin', async (req, res, next) => {
+    req.knex = knex;
+    next();
+}, adminRoute);
+
 const authRoute = require('./routes/auth');
 app.use('/auth', async (req, res, next) => {
     req.knex = knex;
@@ -347,6 +353,13 @@ const fetchTrendingMovies = async () => {
         // Continue with any other initialization before starting the server...
         ensureSchema().then(async () => {
             await loadCategories();
+
+            // Check if the users table is emtpy
+            const users = await knex('users').select('*');
+            if(!users || users.length === 0) {
+                console.log("Welcome to Streamify! Please create an account to get started:");
+                console.log("http://localhost:3000/admin/auth");
+            }
 
             app.listen(PORT, () => {
                 console.log(`Server is running on port ${PORT}`);
