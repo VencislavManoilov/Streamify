@@ -7,8 +7,11 @@ RUN npm install
 
 COPY . .
 
-# Build the Vue.js application
-RUN npm run build
+# Copy the .env file
+COPY .env .env
+
+# Load environment variables and build the Vue.js application
+RUN npm install dotenv && npm run build
 
 # Install a simple static file server to serve the built files
 RUN npm install -g serve
