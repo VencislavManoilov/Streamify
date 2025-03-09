@@ -115,6 +115,25 @@ router.get('/me', Authorization, async (req, res) => {
     res.json({ user: req.user });
 });
 
+router.get('/check-invite', (req, res) => {
+    const token = req.query.token;
+
+    if(!token) {
+        return res.status(400).json({ message: 'Token is required' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if(!decoded) {
+            return res.status(400).json({ message: 'Invalid token' });
+        }
+
+        res.status(200).json({ email: decoded.email });
+    } catch(err) {
+        res.status(400).json({ message: 'Invalid token' });
+    }
+})
+
 router.post('/invite', Authorization, async (req, res) => {
     const { email } = req.body;
 
