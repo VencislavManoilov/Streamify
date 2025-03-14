@@ -294,8 +294,9 @@ const fetchTrendingMovies = async () => {
                     const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
                     const ytsMovie = data.data.data.movies[0];
                     categoryMovies.push(ytsMovie);
+                    console.log(`✅ ${ytsMovie.title}`);
                 } catch (error) {
-                    console.log(`Failed to fetch or upload movie with ID ${movie.id}:`, error);
+                    console.log(`❌ ${movie.original_title}`);
                 }
             }
         }
@@ -327,13 +328,6 @@ const fetchTrendingMovies = async () => {
 
 // Dynamically import WebTorrent and initialize torrentClient before starting the server
 (async () => {
-    // try {
-    //     console.log("Fetching movies for categories...");
-    //     await fetchTrendingMovies();
-    // } catch (err) {
-    //     console.error("Failed to fetch movie categories:", err);
-    // }
-
     try {
         const { default: WebTorrent } = await import('webtorrent');
         torrentClient = new WebTorrent();
@@ -352,6 +346,16 @@ const fetchTrendingMovies = async () => {
 
         // Continue with any other initialization before starting the server...
         ensureSchema().then(async () => {
+            const categoriesExist = await knex('categories').select('*');
+            if (!categoriesExist || categoriesExist.length === 0) {
+                try {
+                    console.log("Fetching movies for categories...");
+                    await fetchTrendingMovies();
+                } catch (err) {
+                    console.error("Failed to fetch movie categories:", err);
+                }
+            }
+
             await loadCategories();
 
             // Check if the users table is emtpy
