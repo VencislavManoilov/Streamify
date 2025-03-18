@@ -24,6 +24,8 @@
             <div class="video-container">
                 <video id="movie-player" class="video-js vjs-default-skin" controls>
                     <source v-if="videoSrc" :src="videoSrc" :key="videoSrc" type="video/mp4" />
+                    <!-- <track :src="subtitesSrc" kind="subtitles" srclang="bg" label="Bulgarian" /> -->
+                    <track v-if="subtitesSrc" :src="subtitesSrc" kind="subtitles" srclang="en" label="English" default />
                     Your browser does not support the video tag.
                 </video>
                 <div v-if="!selectedTorrent" class="overlay">Select Resolution</div>
@@ -64,6 +66,9 @@ export default {
         videoSrc() {
             return this.selectedTorrent ? `${URL}/stream/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
         },
+        subtitesSrc() {
+            return this.selectedTorrent ? `/captions/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
+        },
         isMobile() {
             return window.innerWidth < 768;
         }
@@ -89,9 +94,9 @@ export default {
                     if (videoElement) {
                         if (!this.isMobile) {
                             this.player = new Plyr(videoElement, {
+                                captions: { active: true, update: true },
                                 controls: [
                                     'play-large', // The large play button in the center
-                                    'restart', // Restart playback
                                     'rewind', // Rewind by 10 seconds
                                     'play', // Play/pause playback
                                     'fast-forward', // Fast forward by 10 seconds
@@ -147,12 +152,30 @@ export default {
                                 src: this.videoSrc,
                                 type: 'video/mp4'
                             }
+                        ],
+                        tracks: [
+                            {
+                                kind: 'subtitles',
+                                label: 'English',
+                                srclang: 'en',
+                                src: this.subtitesSrc,
+                                default: true
+                            }
                         ]
                     };
+
                     this.player.play().then(() => {
                         this.isVideoLoaded = true;
                     }).catch(error => {
                         console.error('Error playing video:', error);
+                    });
+
+                    this.player.on('ready', () => {
+                        const track = this.player.elements.container.querySelector('track');
+                        if (track) {
+                            track.mode = 'showing';
+                        }
+                        this.player.toggleCaptions(true);
                     });
                 }
             } else {
