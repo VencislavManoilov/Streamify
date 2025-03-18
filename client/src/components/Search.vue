@@ -112,9 +112,10 @@ export default {
                 this.loading = false;
             }
         },
-        searchMovies() {
+        async searchMovies() {
             if (this.searchQuery.trim() !== '') {
-                this.$router.push({ path: '/search', query: { query: this.searchQuery } });
+                await this.$router.push({ path: '/search', query: { query: this.searchQuery } });
+                window.location.reload();
             }
         },
         startDrag(e) {
