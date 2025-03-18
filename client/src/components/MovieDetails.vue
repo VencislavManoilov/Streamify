@@ -16,7 +16,7 @@
                         </div>
                     </router-link>
                 </button>
-                <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> 10 / {{ rating }}</p>
+                <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> {{ rating }} / 10</p>
                 <p class="year">Year: {{ year }}</p>
                 <p class="genres">Genres: {{ genres.join(', ') }}</p>
             </div>
