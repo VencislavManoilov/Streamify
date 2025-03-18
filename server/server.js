@@ -8,6 +8,7 @@ const cors = require('cors');
 const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
+const srtToVtt = require('srt-to-vtt');
 
 const PORT = 8080;
 
@@ -221,6 +222,66 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
         if (!res.headersSent) {
             res.status(500).json({ error: err.message });
         }
+    }
+});
+
+app.get("/captions/:imdb_code/:torrent_hash", async (req, res) => {
+    const { imdb_code, torrent_hash } = req.params;
+
+    try {
+        const movie = await knex('movies').where({ imdb_code }).first();
+
+        if (!movie) {
+            return res.status(404).json({ error: "Movie not found" });
+        }
+
+        const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
+        if (!torrentMeta) {
+            return res.status(404).json({ error: "Torrent not found" });
+        }
+
+        const torrentUrl = torrentMeta.url;
+
+        // Get the torrent instance
+        const torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
+
+        // Find subtitle files (e.g., .srt or .vtt)
+        const subtitleFiles = torrentInstance.files.filter(file =>
+            file.name.endsWith('.srt') || file.name.endsWith('.vtt')
+        );
+
+        if (subtitleFiles.length === 0) {
+            global.torrentManager.releaseReference(torrent_hash);
+            return res.status(404).json({ error: "No subtitles found in torrent" });
+        }
+
+        // Select the first subtitle file (or implement logic to choose based on language)
+        const subtitleFile = subtitleFiles[0];
+
+        // Stream the subtitle file to the client
+        res.setHeader("Content-Type", "text/vtt");
+
+        const stream = subtitleFile.createReadStream();
+
+        // Convert SRT to VTT if necessary
+        if (subtitleFile.name.endsWith('.srt')) {
+            stream.pipe(srtToVtt()).pipe(res);
+        } else {
+            stream.pipe(res);
+        }
+
+        stream.on("error", (err) => {
+            console.error("Error streaming subtitle file:", err);
+            global.torrentManager.releaseReference(torrent_hash);
+            res.status(500).json({ error: "Failed to stream subtitles" });
+        });
+
+        stream.on("end", () => {
+            global.torrentManager.releaseReference(torrent_hash);
+        });
+    } catch (err) {
+        console.error("Error fetching captions:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
