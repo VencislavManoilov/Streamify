@@ -14,7 +14,7 @@
                     <h3>Torrents</h3>
                     <p>Total Torrents: {{ stats.torrents.totalTorrents }}</p>
                     <p>Torrents with References: {{ stats.torrents.torrentsWithReferences }}</p>
-                    <p>Torrents without References: {{ stats.torrents.torrentsWithReferences }}</p>
+                    <p>Idle Torrents: {{ stats.torrents.idleTorrents }}</p>
                 </div>
             </div>
             <div v-else>
