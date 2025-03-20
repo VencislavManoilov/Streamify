@@ -13,7 +13,7 @@ const srtToVtt = require('srt-to-vtt');
 const PORT = 8080;
 
 app.use(cors({
-    origin: "http://localhost:3000"
+    origin: process.env.CORS_ORIGIN ? JSON.parse(process.env.CORS_ORIGIN) : "http://localhost:3000"
 }));
 
 dotenv.config();
@@ -79,6 +79,7 @@ app.get("/", (req, res) => {
 const adminRoute = require('./routes/admin');
 app.use('/admin', async (req, res, next) => {
     req.knex = knex;
+    req.torrentManager = global.torrentManager;
     next();
 }, adminRoute);
 
