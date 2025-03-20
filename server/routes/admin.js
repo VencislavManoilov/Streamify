@@ -130,7 +130,7 @@ router.get('/stats', Authorization, async (req, res) => {
 
 router.get("/next-refresh", Authorization, async (req, res) => {
     try {
-        const date = await req.timeUntilNextRefresh();
+        const date = await req.nextRefresh();
         res.status(200).json({ date: date });
     } catch(err) {
         res.status(500).json({ message: 'Error fetching time until next reset', error: err.message || err });
