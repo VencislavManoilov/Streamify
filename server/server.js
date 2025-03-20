@@ -430,13 +430,67 @@ let lastFetchTime = Date.now(); // Store the timestamp of the last fetch
 const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
 
 setInterval(async () => {
+    const adminUser = await knex('users').where({ role: 'admin' }).first();
+    if (!adminUser) {
+        console.log("No admin user found. Please create an admin account.");
+    }
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+        host: 'smtp.sendgrid.net',
+        port: 587,
+        secure: false,
+        auth: {
+            user: 'apikey',
+            pass: process.env.SENDGRID_API_KEY
+        }
+    });
+    
     try {
-        console.log("Fetching trending movies...");
         await fetchTrendingMovies();
         lastFetchTime = Date.now(); // Update the last fetch time
-        console.log("Trending movies updated successfully!");
+
+        const URL = process.env.FRONTEND_URL || "http://localhost:3000";
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: adminUser.email,
+            subject: 'Successfully Refreshed the Categories! Streamify',
+            text: `The categories have been successfully refreshed! You can check them out on ${URL}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                    <p>The categories have been successfully refreshed! You can check them out on <a href="${URL}">${URL}</a></p>
+                </div>
+            `
+        };
+
+        transporter.sendMail(mailOptions, (error, info) => {
+            if(error){
+                console.error(error);
+                return res.status(500).json({ message: 'Error sending email' });
+            }
+            return res.status(200).json({ message: 'Email sent' });
+        });
     } catch (err) {
         console.error("Error fetching trending movies:", err);
+        const URL = process.env.FRONTEND_URL || "http://localhost:3000";
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: adminUser.email,
+            subject: 'Error Refreshing the Categories! Streamify',
+            text: `There was an error refreshing the categories. Please check the server logs for more information.`,
+            html: `
+                <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                    <p>There was an error refreshing the categories. Please check the server logs for more information.</p>
+                </div>
+            `
+        };
+
+        transporter.sendMail(mailOptions, (error, info) => {
+            if(error){
+                console.error(error);
+                return res.status(500).json({ message: 'Error sending email' });
+            }
+            return res.status(200).json({ message: 'Email sent' });
+        });
     }
 }, SEVEN_DAYS_IN_MS);
 
