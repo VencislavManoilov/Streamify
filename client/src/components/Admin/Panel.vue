@@ -1,6 +1,26 @@
 <template>
     <div class="admin-panel">
         <h1>Admin Panel</h1>
+        <div class="stats">
+            <h2>Stats</h2>
+            <div v-if="stats">
+                <div>
+                    <h3>General</h3>
+                    <p>Total Users: {{ stats.users.count }}</p>
+                    <p>Total Movies: {{ stats.movies.count }}</p>
+                    <p>Total Categories: {{ stats.categories.count }}</p>
+                </div>
+                <div>
+                    <h3>Torrents</h3>
+                    <p>Total Torrents: {{ stats.torrents.totalTorrents }}</p>
+                    <p>Torrents with References: {{ stats.torrents.torrentsWithReferences }}</p>
+                    <p>Torrents without References: {{ stats.torrents.torrentsWithReferences }}</p>
+                </div>
+            </div>
+            <div v-else>
+                <p>Loading...</p>
+            </div>
+        </div>
         <div class="users">
             <h2>Users</h2>
             <button class="invite" @click="showModal = true">+ Invite</button>
@@ -58,10 +78,13 @@ export default {
             showModal: false,
             inviteEmail: '',
             inviteError: '',
-            inviteSuccess: ''
+            inviteSuccess: '',
+            stats: null
         };
     },
     async mounted() {
+        this.getStats();
+
         const token = localStorage.getItem('token');
         if (!token) {
             this.$router.push('/admin/auth');
@@ -111,6 +134,18 @@ export default {
                 this.inviteSuccess = '';
                 console.error('Error inviting user:', error);
             }
+        },
+        async getStats() {
+            try {
+                const response = await axios.get(URL+'/admin/stats', {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
+                this.stats = response.data;
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
         }
     }
 };
@@ -123,6 +158,25 @@ export default {
 
 .admin-panel h1 {
     margin-bottom: 20px;
+}
+
+.stats > div {
+    display: flex;
+    justify-content: start;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.stats > div > div {
+    background-color: #222;
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: 2px solid #ddd;
+}
+
+.stats p {
+    width: fit-content;
 }
 
 .admin-panel ul {
