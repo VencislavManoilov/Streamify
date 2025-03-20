@@ -37,6 +37,8 @@
             <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> {{ movie.rating }} / 10</p>
             <p class="year">Year: {{ movie.year }}</p>
             <p class="genres">Genres: {{ movie.genres.join(', ') }}</p>
+
+            <button class="resetMovie" @click="resetMovie()">Reset</button>
         </div>
     </div>
 </template>
@@ -199,6 +201,27 @@ export default {
                 this.$router.push({ path: '/search', query: { query: this.searchQuery } });
             }
         },
+        async resetMovie() {
+            // Ask if user is sure
+            if(!confirm('Are you sure you want to reset the movie? \nThis will reset the movie information and torrents.')) {
+                return;
+            }
+
+            try {
+                const response = await axios.post(URL + '/reset-movie', {
+                    imdb_code: this.movie.imdb_code
+                }, {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
+
+                alert(response.data.message || 'Movie reset successfully!');
+                window.location.reload();
+            } catch (error) {
+                alert(`There was an error! \n${error.response.data.message || error.response.data || 'An error occurred'}`);
+            }
+        }
     },
     beforeUnmount() {
         if (this.player) {
@@ -366,6 +389,22 @@ export default {
 .year, .genres {
     font-size: 1.2rem;
     margin-bottom: 6px;
+}
+
+.resetMovie {
+    margin-top: 48px;
+    padding: 10px 20px;
+    font-size: 1.1rem;
+    color: white;
+    background-color: #d9534f;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.resetMovie:hover {
+    background-color: #c9302c;
 }
 
 @keyframes spin {
