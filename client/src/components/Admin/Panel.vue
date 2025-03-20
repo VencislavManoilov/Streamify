@@ -21,6 +21,10 @@
                 <p>Loading...</p>
             </div>
         </div>
+        <div class="categories">
+            <h2>Categories</h2>
+            <button>Manual Reset</button>
+        </div>
         <div class="users">
             <h2>Users</h2>
             <button class="invite" @click="showModal = true">+ Invite</button>

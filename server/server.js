@@ -80,6 +80,8 @@ const adminRoute = require('./routes/admin');
 app.use('/admin', async (req, res, next) => {
     req.knex = knex;
     req.torrentManager = global.torrentManager;
+    req.fetchTrendingMovies = fetchTrendingMovies;
+    req.nextRefresh = nextRefresh;
     next();
 }, adminRoute);
 
@@ -423,6 +425,26 @@ const fetchTrendingMovies = async () => {
 
     return console.log("Fetched movies for categories!");
 };
+
+let lastFetchTime = Date.now(); // Store the timestamp of the last fetch
+const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+
+setInterval(async () => {
+    try {
+        console.log("Fetching trending movies...");
+        await fetchTrendingMovies();
+        lastFetchTime = Date.now(); // Update the last fetch time
+        console.log("Trending movies updated successfully!");
+    } catch (err) {
+        console.error("Error fetching trending movies:", err);
+    }
+}, SEVEN_DAYS_IN_MS);
+
+function nextRefresh() {
+    const nextRefreshTime = lastFetchTime + SEVEN_DAYS_IN_MS;
+
+    return nextRefreshTime;
+}
 
 // Dynamically import WebTorrent and initialize torrentClient before starting the server
 (async () => {

@@ -128,6 +128,25 @@ router.get('/stats', Authorization, async (req, res) => {
     }
 });
 
+router.get("/next-refresh", Authorization, async (req, res) => {
+    try {
+        const date = await req.timeUntilNextRefresh();
+        res.status(200).json({ date: date });
+    } catch(err) {
+        res.status(500).json({ message: 'Error fetching time until next reset', error: err.message || err });
+    }
+});
+
+router.post("/reset-categories", Authorization, async (req, res) => {
+    try {
+        await req.fetchTrendingMovies();
+
+        res.status(200).json({ message: 'Categories reset' });
+    } catch(err) {
+        res.status(500).json({ message: 'Error resetting categories', error: err.message || err });
+    }
+});
+
 router.get('/check-invite', (req, res) => {
     const token = req.query.token;
 
