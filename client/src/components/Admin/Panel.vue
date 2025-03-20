@@ -1,6 +1,9 @@
 <template>
     <div class="admin-panel">
         <h1>Admin Panel</h1>
+
+        <button @click="shutdown" class="shutdown">Shutdown</button>
+
         <div class="stats">
             <h2>Stats</h2>
             <div v-if="stats">
@@ -199,6 +202,21 @@ export default {
                 this.resetCategoriesStatus = error.response.data.message || error.response.data || 'An error occurred';
                 console.error('Error resetting categories:', error);
             }
+        },
+        async shutdown() {
+            if(!confirm('Are you sure you want to shutdown the server?')) {
+                return;
+            }
+
+            try {
+                await axios.post(URL+'/admin/shutdown', {}, {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
+            } catch (error) {
+                console.error('Error shutting down server:', error);
+            }
         }
     }
 };
@@ -211,6 +229,22 @@ export default {
 
 .admin-panel h1 {
     margin-bottom: 20px;
+}
+
+.shutdown {
+    background-color: red;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    margin-bottom: 20px;
+}
+
+.shutdown:hover {
+    background-color: darkred;
 }
 
 .stats > div {
