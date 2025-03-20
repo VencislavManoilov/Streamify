@@ -147,6 +147,17 @@ router.post("/reset-categories", Authorization, async (req, res) => {
     }
 });
 
+router.post("/shutdown", Authorization, async (req, res) => {
+    try {
+        res.status(200).json({ message: 'Server is shutting down' });
+        console.log('Server is shutting down...');
+        process.exit(0);
+    } catch (err) {
+        res.status(500).json({ message: 'Error shutting down server', error: err.message || err });
+        console.log('Error shutting down server', err);
+    }
+});
+
 router.get('/check-invite', (req, res) => {
     const token = req.query.token;
 
