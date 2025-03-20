@@ -423,6 +423,8 @@ const fetchTrendingMovies = async () => {
         }
     }
 
+    await loadCategories();
+
     return console.log("Fetched movies for categories!");
 };
 
