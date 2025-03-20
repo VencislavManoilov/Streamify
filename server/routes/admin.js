@@ -1,7 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const nodemailer = require('nodemailer'); // added
+const nodemailer = require('nodemailer');
 
 const router = express.Router();
 
@@ -115,6 +115,19 @@ router.get('/me', Authorization, async (req, res) => {
     res.json({ user: req.user });
 });
 
+router.get('/stats', Authorization, async (req, res) => {
+    try {
+        const users = await req.knex('users').count('id as count').first();
+        const movies = await req.knex('movies').count('id as count').first();
+        const categories = await req.knex('categories').count('id as count').first();
+        const torrents = req.torrentManager.getStats();
+
+        res.status(200).json({ users, movies, categories, torrents });
+    } catch(err) {
+        res.status(500).json({ message: 'Error fetching stats', error: err.message || err });
+    }
+});
+
 router.get('/check-invite', (req, res) => {
     const token = req.query.token;
 
@@ -154,12 +167,14 @@ router.post('/invite', Authorization, async (req, res) => {
 
     const token = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1d' });
 
+    const URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
     // Send email using nodemailer
     const mailOptions = {
         from: process.env.EMAIL_USER,
         to: email,
         subject: 'Invitation to join Streamify',
-        text: `Please accept the invitation from ${req.user.username} and join our platform. Open this link http://localhost:3000/register/${token}`,
+        text: `Please accept the invitation from ${req.user.username} and join our platform. Open this link ${URL}/register/${token}`,
         html: `
             <div style="font-family: Arial, sans-serif; line-height: 1.6;">
                 <h2 style="color: #333;">You're Invited to Join Streamify!</h2>
@@ -173,13 +188,13 @@ router.post('/invite', Authorization, async (req, res) => {
                     Please click the button below to accept the invitation and complete your registration.
                 </p>
                 <p style="text-align: center;">
-                    <a href="http://localhost:3000/register/${token}" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Join Streamify</a>
+                    <a href="${URL}/register/${token}" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Join Streamify</a>
                 </p>
                 <p>
                     If the button above does not work, please copy and paste the following link into your web browser:
                 </p>
                 <p>
-                    <a href="http://localhost:3000/register/${token}">http://localhost:3000/register/${token}</a>
+                    <a href="${URL}/register/${token}">${URL}/register/${token}</a>
                 </p>
                 <p>
                     Best regards,<br>

@@ -73,6 +73,27 @@ class TorrentManager {
             }
         }
     }
+
+    getStats() {
+        let totalTorrents = 0;
+        let torrentsWithReferences = 0;
+        let idleTorrents = 0;
+
+        for (const entry of this.activeTorrents.values()) {
+            totalTorrents++;
+            if (entry.refCount > 0) {
+                torrentsWithReferences++;
+            } else {
+                idleTorrents++;
+            }
+        }
+
+        return {
+            totalTorrents,
+            torrentsWithReferences,
+            idleTorrents
+        };
+    }
 }
 
 module.exports = TorrentManager;
