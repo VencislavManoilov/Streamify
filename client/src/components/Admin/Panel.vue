@@ -23,7 +23,11 @@
         </div>
         <div class="categories">
             <h2>Categories</h2>
-            <button>Manual Reset</button>
+            <p>Next Reset: {{ nextReset }}</p>
+            <div>
+                <button @click="resetCategories">Manual Reset</button>
+                <p v-if="resetCategoriesStatus">{{ resetCategoriesStatus }}</p>
+            </div>
         </div>
         <div class="users">
             <h2>Users</h2>
@@ -83,11 +87,36 @@ export default {
             inviteEmail: '',
             inviteError: '',
             inviteSuccess: '',
-            stats: null
+            stats: null,
+            nextReset: 'Unknown',
+            nextResetInterval: null
         };
     },
     async mounted() {
         this.getStats();
+
+        try {
+            const response = await axios.get(URL+'/admin/next-refresh', {
+                headers: {
+                    Authorization: localStorage.getItem('token')
+                }
+            });
+
+            this.nextResetInterval = response.data.date;
+
+            setInterval(() => {
+                const now = new Date();
+                const nextReset = new Date(this.nextResetInterval);
+                const diff = nextReset - now;
+                const days = Math.floor(diff / 1000 / 60 / 60 / 24);
+                const hours = Math.floor(diff / 1000 / 60 / 60 % 24);
+                const minutes = Math.floor(diff / 1000 / 60 % 60);
+                const seconds = Math.floor(diff / 1000 % 60);
+                this.nextReset = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+            }, 1000);
+        } catch(error) {
+            console.error('Error fetching categories:', error);
+        }
 
         const token = localStorage.getItem('token');
         if (!token) {
@@ -181,6 +210,22 @@ export default {
 
 .stats p {
     width: fit-content;
+}
+
+.categories button {
+    background-color: #2196F3;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+    margin-top: 10px;
+}
+
+.categories button:hover {
+    background-color: #1976D2;
 }
 
 .admin-panel ul {
