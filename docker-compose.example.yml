@@ -30,6 +30,8 @@ services:
       - TMDB_API_KEY=
       - SENDGRID_API_KEY=
       - EMAIL_USER=
+      - FRONTEND_URL
+      - CORS_ORIGIN=["http://localhost:3000", "", ...]
     depends_on:
       - db
 
