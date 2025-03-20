@@ -33,9 +33,6 @@ async function uploadMovie(movie, type) {
     }
     try {
         const existingMovie = await knex('movies').where({ imdb_code: movie.imdb_code }).first();
-        if (existingMovie) {
-            return;
-        }
 
         if (type === "yts") {
             const newMovie = {
@@ -53,7 +50,16 @@ async function uploadMovie(movie, type) {
                 large_cover_image: movie.large_cover_image,
                 torrents: JSON.stringify(movie.torrents)
             };
+
+            if(existingMovie) {
+                return knex('movies').where({ imdb_code: movie.imdb_code }).update(newMovie);
+            }
+
             return knex('movies').insert(newMovie);
+        }
+
+        if(existingMovie) {
+            return knex('movies').where({ imdb_code: movie.imdb_code }).update(movie);
         }
 
         return knex('movies').insert(movie);
@@ -120,6 +126,36 @@ app.get("/categories", (req, res, next) => {
         res.status(500).json({ error: "Internal server error" });
     }
 });
+
+app.post("/reset-movie", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, async (req, res) => {
+    const { imdb_code } = req.body;
+
+    try {
+        const movie = await knex('movies').where({ imdb_code }).first();
+        if (!movie) {
+            return res.status(404).json({ error: "Movie not found" });
+        }
+    } catch (err) {
+        res.status(500).json({ error: "Internal server error" });
+    }
+
+    try {
+        const data = await axios.get("https://yts.mx/api/v2/movie_details.json?imdb_id=" + imdb_code);
+        movie = data.data.data.movie;
+        if(movie) {
+            await uploadMovie(movie, "yts");
+            return res.json({ message: "Movie reset successfully", movie });
+        }
+
+        return res.status(404).json({ error: "Movie not found" });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: "Failed to fetch movies" });
+    }
+})
 
 app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;
