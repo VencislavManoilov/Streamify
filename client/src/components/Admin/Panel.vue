@@ -88,8 +88,9 @@ export default {
             inviteError: '',
             inviteSuccess: '',
             stats: null,
-            nextReset: 'Unknown',
-            nextResetInterval: null
+            nextReset: 'Loading...',
+            nextResetInterval: null,
+            resetCategoriesStatus: ''
         };
     },
     async mounted() {
@@ -178,6 +179,25 @@ export default {
                 this.stats = response.data;
             } catch (error) {
                 console.error('Error fetching stats:', error);
+            }
+        },
+        async resetCategories() {
+            if(!confirm('Are you sure you want to reset all categories?')) {
+                return;
+            }
+
+            try {
+                this.resetCategoriesStatus = 'Resetting...';
+                const response = await axios.post(URL+'/admin/reset-categories', {}, {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
+                this.resetCategoriesStatus = response.data.message || 'Categories reset successfully';
+                this.getStats();
+            } catch (error) {
+                this.resetCategoriesStatus = error.response.data.message || error.response.data || 'An error occurred';
+                console.error('Error resetting categories:', error);
             }
         }
     }
