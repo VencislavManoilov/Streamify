@@ -5,7 +5,7 @@ class TorrentManager {
     }
 
     async getTorrent(torrentUrl, torrentHash) {
-        // Check if we already have this torrent
+        // Check if we already have this torrent in our manager
         if (this.activeTorrents.has(torrentHash)) {
             const torrentEntry = this.activeTorrents.get(torrentHash);
             torrentEntry.refCount++;
@@ -13,31 +13,89 @@ class TorrentManager {
             return torrentEntry.torrent;
         }
 
+        // Check if the torrent is already in the client but not in our manager
+        const existingTorrent = this.torrentClient.torrents.find(t => 
+            t.infoHash === torrentHash || t.infoHash === torrentHash.toLowerCase()
+        );
+
+        if (existingTorrent) {
+            // Track the existing torrent in our manager
+            this.activeTorrents.set(torrentHash, {
+                torrent: existingTorrent,
+                refCount: 1,
+                lastAccessed: Date.now()
+            });
+            return existingTorrent;
+        }
+
         // Add new torrent
-        const torrent = await new Promise((resolve, reject) => {
-            this.torrentClient.add(torrentUrl, { skipVerify: false }, torrent => {
-                resolve(torrent);
+        try {
+            const torrent = await new Promise((resolve, reject) => {
+                const addOpts = { skipVerify: false };
+                
+                const onTorrent = (torrent) => {
+                    clearTimeout(timeout);
+                    resolve(torrent);
+                };
+                
+                let torrentHandle;
+                try {
+                    torrentHandle = this.torrentClient.add(torrentUrl, addOpts, onTorrent);
+                } catch (err) {
+                    // If it's a duplicate error, try to find and return the existing torrent
+                    if (err.message && err.message.includes('duplicate')) {
+                        const dupeHash = err.message.split('duplicate torrent ')[1];
+                        const existingTorrent = this.torrentClient.get(dupeHash);
+                        if (existingTorrent) return resolve(existingTorrent);
+                    }
+                    return reject(err);
+                }
+                
+                // Set timeout for adding torrent to prevent hanging
+                const timeout = setTimeout(() => {
+                    if (torrentHandle && !torrentHandle.destroyed) {
+                        this.torrentClient.remove(torrentHandle);
+                    }
+                    reject(new Error("Timed out adding torrent"));
+                }, 30000);
+                
+                this.torrentClient.once('error', (err) => {
+                    clearTimeout(timeout);
+                    reject(err);
+                });
             });
-            
-            // Set timeout for adding torrent to prevent hanging
-            const timeout = setTimeout(() => {
-                reject(new Error("Timed out adding torrent"));
-            }, 30000);
-            
-            this.torrentClient.once('error', (err) => {
-                clearTimeout(timeout);
-                reject(err);
+
+            // Store the torrent with reference count
+            this.activeTorrents.set(torrentHash, {
+                torrent,
+                refCount: 1,
+                lastAccessed: Date.now()
             });
-        });
 
-        // Store the torrent with reference count
-        this.activeTorrents.set(torrentHash, {
-            torrent,
-            refCount: 1,
-            lastAccessed: Date.now()
-        });
-
-        return torrent;
+            return torrent;
+        } catch (err) {
+            console.error("Error adding torrent:", err.message);
+            
+            // If it's a duplicate torrent error, try to get the existing torrent
+            if (err.message && err.message.includes('duplicate torrent')) {
+                const match = err.message.match(/duplicate torrent ([0-9a-f]+)/i);
+                if (match && match[1]) {
+                    const dupeHash = match[1];
+                    const existingTorrent = this.torrentClient.get(dupeHash);
+                    
+                    if (existingTorrent) {
+                        this.activeTorrents.set(torrentHash, {
+                            torrent: existingTorrent,
+                            refCount: 1,
+                            lastAccessed: Date.now()
+                        });
+                        return existingTorrent;
+                    }
+                }
+            }
+            
+            throw err;
+        }
     }
 
     releaseReference(torrentHash) {

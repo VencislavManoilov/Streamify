@@ -182,7 +182,40 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
 
         try {
             // Get torrent from torrent manager
-            const torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
+            let torrentInstance = null;
+            
+            try {
+                torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
+            } catch (err) {
+                if (err.message && err.message.includes('duplicate torrent')) {
+                    // Try direct lookup if duplicate error occurs
+                    console.log("Handling duplicate torrent error - attempting direct lookup");
+                    
+                    // Get the hash from the error message if possible
+                    const match = err.message.match(/duplicate torrent ([0-9a-f]+)/i);
+                    const hashToUse = match && match[1] ? match[1] : torrent_hash;
+                    
+                    // Try to get the torrent directly from the client
+                    const existingTorrent = global.torrentManager.torrentClient.get(hashToUse);
+                    if (existingTorrent) {
+                        // Register it in the manager
+                        global.torrentManager.activeTorrents.set(torrent_hash, {
+                            torrent: existingTorrent,
+                            refCount: 1,
+                            lastAccessed: Date.now()
+                        });
+                        torrentInstance = existingTorrent;
+                    } else {
+                        throw new Error("Could not retrieve torrent after duplicate error");
+                    }
+                } else {
+                    throw err;
+                }
+            }
+            
+            if (!torrentInstance) {
+                throw new Error("Failed to get torrent instance");
+            }
             
             const file = torrentInstance.files.find(file => file.name.endsWith('.mp4'));
             if (!file) {
@@ -254,7 +287,7 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
             stream.pipe(res);
         } catch (torrentError) {
             console.error("Torrent error:", torrentError);
-            return res.status(500).json({ error: "Failed to start streaming" });
+            return res.status(500).json({ error: "Failed to start streaming: " + torrentError.message });
         }
     } catch (err) {
         console.error("Stream error:", err);
