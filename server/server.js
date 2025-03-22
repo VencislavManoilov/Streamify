@@ -407,6 +407,28 @@ async function loadCategories() {
 }
 
 const fetchTrendingMovies = async () => {
+    const genres = [
+        { id: 28, name: "Action" },
+        { id: 35, name: "Comedy" },
+        { id: 27, name: "Horror" },
+        { id: 18, name: "Drama" },
+        { id: 16, name: "Animation" },
+        { id: 10749, name: "Romance" },
+        { id: 878, name: "Science Fiction" },
+        { id: 53, name: "Thriller" },
+        { id: 12, name: "Adventure" },
+        { id: 80, name: "Crime" },
+        { id: 14, name: "Fantasy" },
+        // { id: 10751, name: "Family" },
+        { id: 36, name: "History" },
+        // { id: 10402, name: "Music" },
+        { id: 9648, name: "Mystery" },
+        { id: 10752, name: "War" },
+        // { id: 37, name: "Western" }
+    ];
+
+    await knex('categories').del();
+
     const trendingMovies = await axios.get(`https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
     const newMovies = await axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
     const popular = await axios.get(`https://api.themoviedb.org/3/movie/popular?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
@@ -417,17 +439,33 @@ const fetchTrendingMovies = async () => {
     const popularMoviesData = popular.data.results;
     const topRatedMoviesData = topRated.data.results;
 
-    const allCategories = [{name: "Trending", movies: trendingMoviesData}, {name: "New Movies", movies: newMoviesData}, {name: "Popular", movies: popularMoviesData}, {name: "Popular", movies: topRatedMoviesData}];
-    for(const category of allCategories) {
+    const allCategories = [
+        { name: "Trending", movies: trendingMoviesData },
+        { name: "New Movies", movies: newMoviesData },
+        { name: "Popular", movies: popularMoviesData },
+        { name: "Top Rated", movies: topRatedMoviesData },
+    ];
+
+    // Fetch movies by genre
+    for (const genre of genres) {
+        const genreMovies = await axios.get(`https://api.themoviedb.org/3/discover/movie?api_key=${process.env.TMDB_API_KEY}&with_genres=${genre.id}&append_to_response=external_ids`);
+        allCategories.push({ name: genre.name, movies: genreMovies.data.results });
+    }
+
+    for (const category of allCategories) {
         let categoryMovies = [];
         console.log(`Fetching YTS movies for category ${category.name}...`);
-        for(const movie of category.movies) {
-            if(movie.original_title) {
+        for (const movie of category.movies) {
+            if (movie.original_title) {
                 try {
                     const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
                     const ytsMovie = data.data.data.movies[0];
-                    categoryMovies.push(ytsMovie);
-                    console.log(`✅ ${ytsMovie.title}`);
+                    if (ytsMovie) {
+                        categoryMovies.push(ytsMovie);
+                        console.log(`✅ ${ytsMovie.title}`);
+                    } else {
+                        console.log(`❌ ${movie.original_title}`);
+                    }
                 } catch (error) {
                     console.log(`❌ ${movie.original_title}`);
                 }
@@ -443,11 +481,10 @@ const fetchTrendingMovies = async () => {
         try {
             console.log(`Inserting category ${category.name} into database...`);
             const existingCategory = await knex('categories').where({ name: category.name }).first();
+            const movieIds = categoryMovies.map(movie => movie.imdb_code);
             if (existingCategory) {
-                const movieIds = categoryMovies.map(movie => movie.imdb_code);
                 await knex('categories').where({ name: category.name }).update({ movies: JSON.stringify(movieIds) });
             } else {
-                const movieIds = categoryMovies.map(movie => movie.imdb_code);
                 await knex('categories').insert({ name: category.name, movies: JSON.stringify(movieIds) });
             }
             console.log(`Category ${category.name} inserted successfully!`);
