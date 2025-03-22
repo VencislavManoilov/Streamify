@@ -1,4 +1,5 @@
 const knex = require('./knex');
+const logger = require('./utils/logger');
 
 const schemaDefinition = {
   users: {
@@ -39,7 +40,7 @@ async function ensureSchema() {
     const exists = await knex.schema.hasTable(tableName);
 
     if (!exists) {
-      console.log(`Creating ${tableName} table...`);
+      logger.info(`Creating ${tableName} table...`);
       await knex.schema.createTable(tableName, (table) => {
         for (const [columnName, columnProps] of Object.entries(columns)) {
           let column;
@@ -56,12 +57,12 @@ async function ensureSchema() {
         }
       });
     } else {
-      console.log(`Checking for missing columns in ${tableName} table...`);
+      logger.info(`Checking for missing columns in ${tableName} table...`);
       const existingColumns = await knex(tableName).columnInfo();
 
       for (const [columnName, columnProps] of Object.entries(columns)) {
         if (!existingColumns[columnName]) {
-          console.log(`Adding "${columnName}" column to ${tableName} table...`);
+          logger.info(`Adding "${columnName}" column to ${tableName} table...`);
           await knex.schema.alterTable(tableName, (table) => {
             let column;
             if (columnProps.type === 'increments') {
@@ -80,7 +81,7 @@ async function ensureSchema() {
     }
   }
 
-  console.log('Schema check complete.');
+  logger.info('Schema check complete.');
 }
 
 module.exports = ensureSchema;

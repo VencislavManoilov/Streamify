@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
@@ -241,6 +242,27 @@ router.post('/invite', Authorization, async (req, res) => {
         }
         return res.status(200).json({ message: 'Email sent' });
     });
+});
+
+router.get("/logs", Authorization, async (req, res) => {
+    const { level, count } = req.query;
+    
+    try {
+        let logs;
+        
+        if (level) {
+            logs = logger.getLogsByLevel(level);
+        } else if (count) {
+            logs = logger.getRecentLogs(parseInt(count));
+        } else {
+            logs = logger.getLogs();
+        }
+        
+        res.json({ logs });
+    } catch (err) {
+        logger.error("Error retrieving logs: " + err);
+        res.status(500).json({ error: "Failed to retrieve logs" });
+    }
 });
 
 module.exports = router;

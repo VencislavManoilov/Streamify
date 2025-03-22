@@ -9,6 +9,7 @@ const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
 const srtToVtt = require('srt-to-vtt');
+const logger = require('./utils/logger');
 
 const PORT = 8080;
 
@@ -64,7 +65,7 @@ async function uploadMovie(movie, type) {
 
         return knex('movies').insert(movie);
     } catch (dbError) {
-        console.error("Database insertion error:", dbError);
+        logger.error("Database insertion error: " + dbError);
         return Promise.reject(dbError);
     }
 }
@@ -155,7 +156,7 @@ app.post("/reset-movie", (req, res, next) => {
 
         return res.status(404).json({ error: "Movie not found" });
     } catch (error) {
-        console.log(error);
+        logger.error(error);
         res.status(500).json({ error: "Failed to fetch movies" });
     }
 })
@@ -189,7 +190,7 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
             } catch (err) {
                 if (err.message && err.message.includes('duplicate torrent')) {
                     // Try direct lookup if duplicate error occurs
-                    console.log("Handling duplicate torrent error - attempting direct lookup");
+                    logger.info("Handling duplicate torrent error - attempting direct lookup");
                     
                     // Get the hash from the error message if possible
                     const match = err.message.match(/duplicate torrent ([0-9a-f]+)/i);
@@ -286,11 +287,11 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
 
             stream.pipe(res);
         } catch (torrentError) {
-            console.error("Torrent error:", torrentError);
+            logger.error("Torrent error: " + torrentError);
             return res.status(500).json({ error: "Failed to start streaming: " + torrentError.message });
         }
     } catch (err) {
-        console.error("Stream error:", err);
+        logger.error("Stream error: " + err);
         if (!res.headersSent) {
             res.status(500).json({ error: err.message });
         }
@@ -343,7 +344,7 @@ app.get("/captions/:imdb_code/:torrent_hash", async (req, res) => {
         }
 
         stream.on("error", (err) => {
-            console.error("Error streaming subtitle file:", err);
+            logger.error("Error streaming subtitle file: " + err);
             global.torrentManager.releaseReference(torrent_hash);
             res.status(500).json({ error: "Failed to stream subtitles" });
         });
@@ -352,7 +353,7 @@ app.get("/captions/:imdb_code/:torrent_hash", async (req, res) => {
             global.torrentManager.releaseReference(torrent_hash);
         });
     } catch (err) {
-        console.error("Error fetching captions:", err);
+        logger.error("Error fetching captions: " + err);
         res.status(500).json({ error: "Internal server error" });
     }
 });
@@ -381,7 +382,7 @@ app.get("/search", (req, res, next) => {
 
         res.json(response.data.Search);
     } catch (error) {
-        console.log(error);
+        logger.error(error);
         res.status(500).json({ error: "Failed to fetch movies" });
     }
 });
@@ -401,7 +402,7 @@ async function loadCategories() {
         }
         return categories;
     } catch (dbError) {
-        console.error("Database error:", dbError);
+        logger.error("Database error: " + dbError);
         return Promise.reject(dbError);
     }
 }
@@ -454,7 +455,7 @@ const fetchTrendingMovies = async () => {
 
     for (const category of allCategories) {
         let categoryMovies = [];
-        console.log(`Fetching YTS movies for category ${category.name}...`);
+        logger.info(`Fetching YTS movies for category ${category.name}...`);
         for (const movie of category.movies) {
             if (movie.original_title) {
                 try {
@@ -462,24 +463,24 @@ const fetchTrendingMovies = async () => {
                     const ytsMovie = data.data.data.movies[0];
                     if (ytsMovie) {
                         categoryMovies.push(ytsMovie);
-                        console.log(`✅ ${ytsMovie.title}`);
+                        logger.info(`✅ ${ytsMovie.title}`);
                     } else {
-                        console.log(`❌ ${movie.original_title}`);
+                        logger.warn(`❌ ${movie.original_title}`);
                     }
                 } catch (error) {
-                    console.log(`❌ ${movie.original_title}`);
+                    logger.warn(`❌ ${movie.original_title}`);
                 }
             }
         }
 
-        console.log(`Uploading ${categoryMovies.length} movies for category ${category.name}...`);
+        logger.info(`Uploading ${categoryMovies.length} movies for category ${category.name}...`);
         for(const movie of categoryMovies) {
             await uploadMovie(movie, "yts");
         }
-        console.log(`Uploaded ${categoryMovies.length} movies for category ${category.name}!`);
+        logger.info(`Uploaded ${categoryMovies.length} movies for category ${category.name}!`);
 
         try {
-            console.log(`Inserting category ${category.name} into database...`);
+            logger.info(`Inserting category ${category.name} into database...`);
             const existingCategory = await knex('categories').where({ name: category.name }).first();
             const movieIds = categoryMovies.map(movie => movie.imdb_code);
             if (existingCategory) {
@@ -487,15 +488,15 @@ const fetchTrendingMovies = async () => {
             } else {
                 await knex('categories').insert({ name: category.name, movies: JSON.stringify(movieIds) });
             }
-            console.log(`Category ${category.name} inserted successfully!`);
+            logger.info(`Category ${category.name} inserted successfully!`);
         } catch (dbError) {
-            console.log(`Database insertion error for category ${category.name}:`, dbError);
+            logger.error(`Database insertion error for category ${category.name}: ${dbError}`);
         }
     }
 
     await loadCategories();
 
-    return console.log("Fetched movies for categories!");
+    return logger.info("Fetched movies for categories!");
 };
 
 let lastFetchTime = Date.now(); // Store the timestamp of the last fetch
@@ -504,7 +505,7 @@ const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
 setInterval(async () => {
     const adminUser = await knex('users').where({ role: 'admin' }).first();
     if (!adminUser) {
-        console.log("No admin user found. Please create an admin account.");
+        logger.warn("No admin user found. Please create an admin account.");
     }
     const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
@@ -536,13 +537,13 @@ setInterval(async () => {
 
         transporter.sendMail(mailOptions, (error, info) => {
             if(error){
-                console.error(error);
+                logger.error(error);
                 return res.status(500).json({ message: 'Error sending email' });
             }
             return res.status(200).json({ message: 'Email sent' });
         });
     } catch (err) {
-        console.error("Error fetching trending movies:", err);
+        logger.error("Error fetching trending movies: " + err);
         const URL = process.env.FRONTEND_URL || "http://localhost:3000";
         const mailOptions = {
             from: process.env.EMAIL_USER,
@@ -558,7 +559,7 @@ setInterval(async () => {
 
         transporter.sendMail(mailOptions, (error, info) => {
             if(error){
-                console.error(error);
+                logger.error(error);
                 return res.status(500).json({ message: 'Error sending email' });
             }
             return res.status(200).json({ message: 'Email sent' });
@@ -595,10 +596,10 @@ function nextRefresh() {
             const categoriesExist = await knex('categories').select('*');
             if (!categoriesExist || categoriesExist.length === 0) {
                 try {
-                    console.log("Fetching movies for categories...");
+                    logger.info("Fetching movies for categories...");
                     await fetchTrendingMovies();
                 } catch (err) {
-                    console.error("Failed to fetch movie categories:", err);
+                    logger.error("Failed to fetch movie categories: " + err);
                 }
             }
 
@@ -607,16 +608,16 @@ function nextRefresh() {
             // Check if the users table is emtpy
             const users = await knex('users').select('*');
             if(!users || users.length === 0) {
-                console.log("Welcome to Streamify! Please create an account to get started:");
-                console.log("http://localhost:3000/admin/auth");
+                logger.info("Welcome to Streamify! Please create an account to get started:");
+                logger.info("http://localhost:3000/admin/auth");
             }
 
             app.listen(PORT, () => {
-                console.log(`Server is running on port ${PORT}`);
+                logger.info(`Server is running on port ${PORT}`);
             });
         });
     } catch (err) {
-        console.error('Failed to load WebTorrent module:', err);
+        logger.error('Failed to load WebTorrent module: ' + err);
         process.exit(1);
     }
 })();
