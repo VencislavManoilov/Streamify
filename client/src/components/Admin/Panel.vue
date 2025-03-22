@@ -59,6 +59,27 @@
                 </tbody>
             </table>
         </div>
+
+        <div>
+            <h2>Logs</h2>
+            <div class="logs-container">
+                <div v-if="logs && logs.length" class="logs">
+                    <div 
+                        v-for="(log, index) in logs" 
+                        :key="index" 
+                        class="log-entry"
+                        :class="log.level"
+                    >
+                        <div class="log-timestamp">{{ formatTimestamp(log.timestamp) }}</div>
+                        <div class="log-level">[{{ log.level.toUpperCase() }}]</div>
+                        <div class="log-message">{{ log.message }}</div>
+                    </div>
+                </div>
+                <div v-else class="no-logs">
+                    <p>No logs available</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="modal" v-if="showModal" @click.self="showModal = false">
@@ -93,7 +114,8 @@ export default {
             stats: null,
             nextReset: 'Loading...',
             nextResetInterval: null,
-            resetCategoriesStatus: ''
+            resetCategoriesStatus: '',
+            logs: []
         };
     },
     async mounted() {
@@ -141,6 +163,10 @@ export default {
             }
         }
         this.fetchUsers();
+
+        setInterval(() => {
+            this.getLogs();
+        }, 1000);
     },
     methods: {
         async fetchUsers() {
@@ -203,6 +229,18 @@ export default {
                 console.error('Error resetting categories:', error);
             }
         },
+        async getLogs() {
+            try {
+                const response = await axios.get(URL+'/admin/logs', {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
+                this.logs = response.data.logs;
+            } catch (error) {
+                console.error('Error fetching logs:', error);
+            }
+        },
         async shutdown() {
             if(!confirm('Are you sure you want to shutdown the server?')) {
                 return;
@@ -217,7 +255,12 @@ export default {
             } catch (error) {
                 console.error('Error shutting down server:', error);
             }
-        }
+        },
+        formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + 
+                   ' ' + date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        },
     }
 };
 </script>
@@ -405,5 +448,71 @@ export default {
     background-color: #333;
     color: white;
     cursor: pointer;
+}
+
+.logs-container {
+    background-color: #1a1a1a;
+    border-radius: 6px;
+    border: 1px solid #333;
+    max-height: 500px;
+    overflow-y: auto;
+    margin-top: 10px;
+    font-family: monospace;
+}
+
+.logs {
+    padding: 10px;
+}
+
+.log-entry {
+    display: flex;
+    padding: 6px 10px;
+    border-bottom: 1px solid #333;
+    align-items: flex-start;
+    line-height: 1.4;
+    font-size: 0.9rem;
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
+.log-timestamp {
+    color: #888;
+    margin-right: 8px;
+    white-space: nowrap;
+}
+
+.log-level {
+    font-weight: bold;
+    margin-right: 8px;
+    min-width: 50px;
+}
+
+.log-message {
+    flex: 1;
+    word-break: break-word;
+}
+
+.log-entry.info .log-level {
+    color: #2196F3;
+}
+
+.log-entry.log .log-level {
+    color: #4CAF50;
+}
+
+.log-entry.warn .log-level {
+    color: #FF9800;
+}
+
+.log-entry.error .log-level {
+    color: #F44336;
+}
+
+.no-logs {
+    padding: 20px;
+    text-align: center;
+    color: #888;
 }
 </style>
