@@ -18,8 +18,7 @@ class Logger {
             level
         };
         
-        // Add to the beginning for more recent logs first
-        this.logs.unshift(logEntry);
+        this.logs.push(logEntry);
         
         // Trim logs if they exceed max size
         if (this.logs.length > this.maxLogSize) {
