@@ -38,6 +38,11 @@
             <p class="year">Year: {{ movie.year }}</p>
             <p class="genres">Genres: {{ movie.genres.join(', ') }}</p>
 
+            <div class="summary">
+                <h2>Summary</h2>
+                <p>{{ movie.summary || "No summary available" }}</p>
+            </div>
+
             <button class="resetMovie" @click="resetMovie()">Reset</button>
         </div>
     </div>
@@ -391,8 +396,21 @@ export default {
     margin-bottom: 6px;
 }
 
+.summary {
+    margin-top: 24px;
+}
+
+.summary > h2 {
+    margin-bottom: 0;
+}
+
+.summary > p {
+    margin-top: 8px;
+    line-height: 1.5rem;
+}
+
 .resetMovie {
-    margin-top: 48px;
+    margin: 48px 0;
     padding: 10px 20px;
     font-size: 1.1rem;
     color: white;
