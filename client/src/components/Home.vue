@@ -1,4 +1,7 @@
 <template>
+    <div class="adminPanel" v-if="admin">
+        <button @click="goToAdmin()">Go to Admin</button>
+    </div>
     <div>
         <div v-if="loading">Loading...</div>
         <Welcome v-else-if="!auth" />
@@ -19,6 +22,7 @@ export default {
         return {
             auth: false,
             loading: true,
+            admin: false
         };
     },
     components: {
@@ -33,8 +37,9 @@ export default {
                     headers: {
                         Authorization: `${token}`
                     }
-                }).then(() => {
+                }).then((response) => {
                     this.auth = true;
+                    this.admin = response.data.user.role === 'admin' ? response.data.user.username : false;
                 }).catch(() => {
                     this.auth = false;
                 }).finally(() => {
@@ -48,6 +53,11 @@ export default {
             console.error('There was an error!', error);
             this.loading = false;
         }
+    },
+    methods: {
+        goToAdmin() {
+            this.$router.push('/admin');
+        }
     }
 };
 </script>
@@ -55,5 +65,28 @@ export default {
 <style scoped>
 .home {
     padding: 0;
+}
+
+.adminPanel {
+    padding: 10px;
+    background-color: #333;
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.adminPanel button {
+    padding: 5px 10px;
+    background-color: #555;
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.3s ease;
+}
+
+.adminPanel button:hover {
+    background-color: #777;
 }
 </style>
