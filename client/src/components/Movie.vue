@@ -73,6 +73,7 @@ export default {
             player: null,
             loadError: null,
             searchQuery: '',
+            keyboardListener: null
         };
     },
     computed: {
@@ -98,6 +99,41 @@ export default {
         }).catch(error => {
             console.error('There was an error!', error);
         });
+
+        // Add global keyboard controls
+        this.keyboardListener = (e) => {
+            if (!this.player) return;
+            
+            switch(e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    this.player.togglePlay();
+                    this.player.togglePlay();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    this.player.rewind(10);
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    this.player.forward(10);
+                    break;
+                case 'ArrowUp': {
+                    e.preventDefault();
+                    const newVolume = Math.min(1, this.player.volume + 0.1);
+                    this.player.volume = newVolume;
+                    break;
+                }
+                case 'ArrowDown': {
+                    e.preventDefault();
+                    const newVol = Math.max(0, this.player.volume - 0.1);
+                    this.player.volume = newVol;
+                    break;
+                }
+            }
+        };
+        
+        document.addEventListener('keydown', this.keyboardListener);
     },
     watch: {
         movie(newVal) {
@@ -107,6 +143,7 @@ export default {
                     if (videoElement) {
                         if (!this.isMobile) {
                             this.player = new Plyr(videoElement, {
+                                keyboard: { focused: false, global: true },
                                 captions: { active: true, update: true },
                                 controls: [
                                     'play-large', // The large play button in the center
@@ -238,6 +275,10 @@ export default {
         if (this.player) {
             // Use Plyr's destroy method
             this.player.destroy();
+        }
+        // Remove keyboard listener
+        if (this.keyboardListener) {
+            document.removeEventListener('keydown', this.keyboardListener);
         }
     }
 };
