@@ -38,7 +38,7 @@ router.post('/register', async (req, res) => {
         const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
         res.status(200).json({ token });
     } catch(err) {
-        console.log(err);
+        logger.log("Error creating jwt token: " + err);
         res.status(400).json({ message: 'Error generating token' });
     }
 });

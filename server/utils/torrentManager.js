@@ -1,3 +1,5 @@
+const logger = require('../utils/logger');
+
 class TorrentManager {
     constructor(torrentClient) {
         this.torrentClient = torrentClient;
@@ -74,7 +76,7 @@ class TorrentManager {
 
             return torrent;
         } catch (err) {
-            console.error("Error adding torrent:", err.message);
+            logger.error("Error adding torrent:" + err);
             
             // If it's a duplicate torrent error, try to get the existing torrent
             if (err.message && err.message.includes('duplicate torrent')) {

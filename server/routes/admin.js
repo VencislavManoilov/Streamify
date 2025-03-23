@@ -151,11 +151,11 @@ router.post("/reset-categories", Authorization, async (req, res) => {
 router.post("/shutdown", Authorization, async (req, res) => {
     try {
         res.status(200).json({ message: 'Server is shutting down' });
-        console.log('Server is shutting down...');
+        logger.log('Server is shutting down...');
         process.exit(0);
     } catch (err) {
         res.status(500).json({ message: 'Error shutting down server', error: err.message || err });
-        console.log('Error shutting down server', err);
+        logger.log('Error shutting down server', err);
     }
 });
 
@@ -252,7 +252,7 @@ router.post('/invite', Authorization, async (req, res) => {
 
     transporter.sendMail(mailOptions, (error, info) => {
         if(error){
-            console.error(error);
+            logger.error(error);
             return res.status(500).json({ message: 'Error sending email' });
         }
         return res.status(200).json({ message: 'Email sent' });
