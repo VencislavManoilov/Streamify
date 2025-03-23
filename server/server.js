@@ -388,6 +388,7 @@ app.get("/search", (req, res, next) => {
 });
 
 async function loadCategories() {
+    categories = [];
     try {
         const load = await knex('categories').select('*');
         for(const category of load) {
