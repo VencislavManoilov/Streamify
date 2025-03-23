@@ -44,7 +44,7 @@ async function uploadMovie(movie, type) {
                 year: movie.year,
                 rating: movie.rating,
                 runtime: movie.runtime,
-                summary: movie.summary || "No summary available",
+                summary: movie.summary || movie.description || movie.description_full || movie.description_intro || movie.overview || "No summary available",
                 background_image: movie.background_image,
                 small_cover_image: movie.small_cover_image,
                 medium_cover_image: movie.medium_cover_image,
@@ -430,10 +430,10 @@ const fetchTrendingMovies = async () => {
 
     await knex('categories').del();
 
-    const trendingMovies = await axios.get(`https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
-    const newMovies = await axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
-    const popular = await axios.get(`https://api.themoviedb.org/3/movie/popular?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
-    const topRated = await axios.get(`https://api.themoviedb.org/3/movie/top_rated?api_key=${process.env.TMDB_API_KEY}&append_to_response=external_ids`);
+    const trendingMovies = await axios.get(`https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}`);
+    const newMovies = await axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${process.env.TMDB_API_KEY}`);
+    const popular = await axios.get(`https://api.themoviedb.org/3/movie/popular?api_key=${process.env.TMDB_API_KEY}`);
+    const topRated = await axios.get(`https://api.themoviedb.org/3/movie/top_rated?api_key=${process.env.TMDB_API_KEY}`);
 
     const trendingMoviesData = trendingMovies.data.results;
     const newMoviesData = newMovies.data.results;
@@ -449,7 +449,7 @@ const fetchTrendingMovies = async () => {
 
     // Fetch movies by genre
     for (const genre of genres) {
-        const genreMovies = await axios.get(`https://api.themoviedb.org/3/discover/movie?api_key=${process.env.TMDB_API_KEY}&with_genres=${genre.id}&append_to_response=external_ids`);
+        const genreMovies = await axios.get(`https://api.themoviedb.org/3/discover/movie?api_key=${process.env.TMDB_API_KEY}&with_genres=${genre.id}`);
         allCategories.push({ name: genre.name, movies: genreMovies.data.results });
     }
 
@@ -459,9 +459,10 @@ const fetchTrendingMovies = async () => {
         for (const movie of category.movies) {
             if (movie.original_title) {
                 try {
-                    const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
+                    const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(movie.original_title)}&limit=1`);
                     const ytsMovie = data.data.data.movies[0];
                     if (ytsMovie) {
+                        ytsMovie.overview = movie.overview;
                         categoryMovies.push(ytsMovie);
                         logger.info(`✅ ${ytsMovie.title}`);
                     } else {
