@@ -34,7 +34,13 @@
                 </div>
             </div>
     
-            <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> {{ movie.rating }} / 10</p>
+            <div class="movie-info">
+                <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> {{ movie.rating }} / 10</p>
+                <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" class="imdb-button">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDB">
+                </a>
+            </div>
+            
             <p class="year">Year: {{ movie.year }}</p>
             <p class="genres">Genres: {{ movie.genres.join(', ') }}</p>
 
@@ -376,24 +382,50 @@ export default {
     animation: spin 1s linear infinite;
 }
 
-.rating, .year, .genres {
-    margin: 0;
+.movie-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 24px;
+    margin-bottom: 24px;
 }
 
+.imdb-button {
+    background-color: #f5c518;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-right: 6px;
+    display: flex;
+    align-items: center;
+    transition: all 0.3s ease;
+}
+
+.imdb-button:hover {
+    filter: brightness(0.8);
+}
+
+.imdb-button img {
+    height: 24px;
+    width: auto;
+}
+
+/* Update existing rating style to work with new layout */
 .rating {
+    margin: 0;
     display: flex;
     flex-direction: row;
-    width: fit-content;
     align-items: center;
     gap: 3px;
     font-size: 1.3rem;
-    margin-top: 24px;
-    margin-bottom: 24px;
 }
 
 .year, .genres {
     font-size: 1.2rem;
     margin-bottom: 6px;
+}
+
+.genres {
+    margin-top: 0;
 }
 
 .summary {
