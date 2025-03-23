@@ -460,7 +460,7 @@ const fetchTrendingMovies = async () => {
         for (const movie of category.movies) {
             if (movie.original_title) {
                 try {
-                    const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(movie.original_title)}&limit=1`);
+                    const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
                     const ytsMovie = data.data.data.movies[0];
                     if (ytsMovie) {
                         ytsMovie.overview = movie.overview;
