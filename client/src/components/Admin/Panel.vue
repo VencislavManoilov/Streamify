@@ -46,16 +46,23 @@
                 </tr>
                 </thead>
                 <tbody>
-                <tr v-for="user in users" :key="user.id">
-                    <td>{{ user.id }}</td>
-                    <td>{{ user.username }}</td>
-                    <td>{{ user.email }}</td>
-                    <td>{{ user.role }}</td>
-                    <td>{{ new Date(user.created_at).toLocaleString() }}</td>
-                </tr>
-                <tr v-if="!users.length">
-                    <td colspan="5">No users found</td>
-                </tr>
+                    <template v-for="user in users" :key="user.id">
+                        <tr @click="toggleExpandUser(user.id)" :class="{ 'expanded': expandedUsers.includes(user.id) }">
+                            <td>{{ user.id }}</td>
+                            <td>{{ user.username }}</td>
+                            <td>{{ user.email }}</td>
+                            <td>{{ user.role }}</td>
+                            <td>{{ new Date(user.created_at).toLocaleString() }}</td>
+                        </tr>
+                        <tr v-if="expandedUsers.includes(user.id)" class="expanded-row">
+                            <td colspan="5">
+                                <button @click="deleteUser(user.id)" class="delete-user">Delete User</button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr v-if="!users.length">
+                        <td colspan="5">No users found</td>
+                    </tr>
                 </tbody>
             </table>
         </div>
@@ -115,7 +122,8 @@ export default {
             nextReset: 'Loading...',
             nextResetInterval: null,
             resetCategoriesStatus: '',
-            logs: []
+            logs: [],
+            expandedUsers: [],
         };
     },
     async mounted() {
@@ -260,6 +268,33 @@ export default {
             const date = new Date(timestamp);
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + 
                    ' ' + date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        },
+        toggleExpandUser(userId) {
+            const index = this.expandedUsers.indexOf(userId);
+            if (index === -1) {
+                this.expandedUsers.push(userId);
+            } else {
+                this.expandedUsers.splice(index, 1);
+            }
+        },
+        async deleteUser(userId) {
+            const user = this.users.find(u => u.id === userId);
+            if (!user || !confirm(`Are you sure you want to delete this user ${user.username}?`)) {
+                return;
+            }
+            
+            try {
+                await axios.delete(`${URL}/admin/user/${userId}`, {
+                    headers: {
+                        Authorization: localStorage.getItem('token')
+                    }
+                });
+                this.fetchUsers();
+                this.expandedUsers = this.expandedUsers.filter(id => id !== userId);
+            } catch (error) {
+                console.error('Error deleting user:', error);
+                alert('Failed to delete user');
+            }
         },
     }
 };
@@ -514,5 +549,32 @@ export default {
     padding: 20px;
     text-align: center;
     color: #888;
+}
+
+.expanded {
+    background-color: #2a2a2a !important;
+}
+
+.expanded-row {
+    background-color: #2a2a2a;
+}
+
+.expanded-row td {
+    padding: 0 12px 12px 12px !important;
+}
+
+.delete-user {
+    background-color: #dc3545;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    margin: 8px 0;
+}
+
+.delete-user:hover {
+    background-color: #c82333;
 }
 </style>
