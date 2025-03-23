@@ -159,6 +159,21 @@ router.post("/shutdown", Authorization, async (req, res) => {
     }
 });
 
+router.delete('/user/:id', Authorization, async (req, res) => {
+    const id = req.params.id;
+
+    if(!id) {
+        return res.status(400).send('User ID not found');
+    }
+
+    try {
+        await req.knex('users').where({ id }).delete();
+        res.status(200).send('User deleted');
+    } catch(err) {
+        res.status(500).send('Error deleting user');
+    }
+});
+
 router.get('/check-invite', (req, res) => {
     const token = req.query.token;
 
