@@ -107,8 +107,7 @@ export default {
             switch(e.code) {
                 case 'Space':
                     e.preventDefault();
-                    this.player.togglePlay();
-                    this.player.togglePlay();
+                    this.player.togglePlay(this.player.playing);
                     break;
                 case 'ArrowLeft':
                     e.preventDefault();
