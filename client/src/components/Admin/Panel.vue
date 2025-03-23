@@ -69,7 +69,7 @@
 
         <div>
             <h2>Logs</h2>
-            <div class="logs-container">
+            <div class="logs-container" ref="logsContainer">
                 <div v-if="logs && logs.length" class="logs">
                     <div 
                         v-for="(log, index) in logs" 
@@ -245,8 +245,16 @@ export default {
                     }
                 });
                 this.logs = response.data.logs;
+                this.$nextTick(() => {
+                    this.scrollToBottom();
+                });
             } catch (error) {
                 console.error('Error fetching logs:', error);
+            }
+        },
+        scrollToBottom() {
+            if (this.$refs.logsContainer) {
+                this.$refs.logsContainer.scrollTop = this.$refs.logsContainer.scrollHeight;
             }
         },
         async shutdown() {
