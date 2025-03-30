@@ -10,6 +10,8 @@ const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
 const srtToVtt = require('srt-to-vtt');
 const logger = require('./utils/logger');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = 8080;
 
@@ -298,63 +300,286 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     }
 });
 
+// OpenSubtitles API configuration
+const OPENSUBS_API_URL = "https://api.opensubtitles.com/api/v1";
+let openSubsToken = null;
+let tokenExpiry = null;
+const OPENSUBS_USER_AGENT = "Streamify v1.0.0"; // Define a specific user agent for our app
+
+// Function to login to OpenSubtitles and get access token
+async function getOpenSubtitlesToken() {
+    // Return existing token if it's still valid
+    if (openSubsToken && tokenExpiry && tokenExpiry > Date.now()) {
+        return openSubsToken;
+    }
+    
+    try {
+        const response = await axios.post(`${OPENSUBS_API_URL}/login`, {
+            username: process.env.OPENSUBS_USERNAME,
+            password: process.env.OPENSUBS_PASSWORD
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Api-Key': process.env.OPENSUBS_API_KEY,
+                'User-Agent': OPENSUBS_USER_AGENT
+            }
+        });
+        
+        // Set token with 24h expiry (or use actual expiry from response if available)
+        openSubsToken = response.data.token;
+        tokenExpiry = Date.now() + 23 * 60 * 60 * 1000; // 23 hours to be safe
+        
+        logger.info("Successfully logged in to OpenSubtitles API");
+        return openSubsToken;
+    } catch (error) {
+        logger.error(`OpenSubtitles login error: ${error.message}`);
+        if (error.response) {
+            logger.error(`Response status: ${error.response.status}`);
+            logger.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        throw new Error("Failed to authenticate with OpenSubtitles");
+    }
+}
+
+// Function to search and download subtitles for a movie
+async function getSubtitles(imdbId, language = 'en') {
+    try {
+        // Ensure we have a valid token
+        const token = await getOpenSubtitlesToken();
+        
+        // Format the IMDb ID properly (OpenSubtitles expects the 'tt' prefix)
+        const formattedImdbId = imdbId.startsWith('tt') ? imdbId : `tt${imdbId}`;
+        
+        // Create cache directory if it doesn't exist
+        const cacheDir = path.join(__dirname, 'subtitle_cache');
+        if (!fs.existsSync(cacheDir)) {
+            fs.mkdirSync(cacheDir, { recursive: true });
+        }
+        
+        // Check if we already have this subtitle cached
+        const cacheFilePath = path.join(cacheDir, `${imdbId}_${language}.vtt`);
+        if (fs.existsSync(cacheFilePath)) {
+            logger.info(`Using cached subtitle for ${imdbId} in ${language}`);
+            return cacheFilePath;
+        }
+        
+        logger.info(`Searching for subtitles: IMDb ID ${formattedImdbId}, language ${language}`);
+        
+        // Search for subtitles - note we're using the proper OpenSubtitles format
+        const searchResponse = await axios.get(`${OPENSUBS_API_URL}/subtitles`, {
+            params: {
+                imdb_id: formattedImdbId,
+                languages: language
+            },
+            headers: {
+                'Content-Type': 'application/json',
+                'Api-Key': process.env.OPENSUBS_API_KEY,
+                'Authorization': `Bearer ${token}`,
+                'User-Agent': OPENSUBS_USER_AGENT,
+                'Accept': 'application/json'
+            }
+        });
+        
+        logger.info(`Search response received, found ${searchResponse.data.data?.length || 0} subtitles`);
+        
+        if (!searchResponse.data.data || searchResponse.data.data.length === 0) {
+            throw new Error(`No subtitles found for IMDb ID ${formattedImdbId} in language ${language}`);
+        }
+        
+        // Find the best subtitle (highest rated or first available)
+        let bestSubtitle = null;
+        for (const sub of searchResponse.data.data) {
+            if (!bestSubtitle || 
+                (sub.attributes.ratings && bestSubtitle.attributes.ratings && 
+                 sub.attributes.ratings > bestSubtitle.attributes.ratings)) {
+                bestSubtitle = sub;
+            }
+        }
+        
+        if (!bestSubtitle) {
+            throw new Error(`No suitable subtitle found for IMDb ID ${formattedImdbId} in language ${language}`);
+        }
+        
+        logger.info(`Selected subtitle: ${bestSubtitle.attributes.release || 'Unknown release'}`);
+        
+        // Make sure there are files available
+        if (!bestSubtitle.attributes.files || bestSubtitle.attributes.files.length === 0) {
+            throw new Error('Selected subtitle has no files available');
+        }
+        
+        // Download subtitle file
+        logger.info(`Downloading subtitle file_id: ${bestSubtitle.attributes.files[0].file_id}`);
+        
+        const downloadResponse = await axios.post(
+            `${OPENSUBS_API_URL}/download`,
+            { file_id: bestSubtitle.attributes.files[0].file_id },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Api-Key': process.env.OPENSUBS_API_KEY,
+                    'Authorization': `Bearer ${token}`,
+                    'User-Agent': OPENSUBS_USER_AGENT,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+        
+        // Download the actual subtitle file
+        const subtitleFileUrl = downloadResponse.data.link;
+        logger.info(`Subtitle download URL: ${subtitleFileUrl}`);
+        
+        const subtitleResponse = await axios.get(subtitleFileUrl, { 
+            responseType: 'stream',
+            headers: {
+                'User-Agent': OPENSUBS_USER_AGENT
+            }
+        });
+        
+        // Convert SRT to VTT if needed and save to cache
+        const fileStream = fs.createWriteStream(cacheFilePath);
+        
+        if (subtitleFileUrl.endsWith('.srt')) {
+            // Convert SRT to VTT
+            logger.info(`Converting SRT to VTT for ${imdbId} in ${language}`);
+            subtitleResponse.data.pipe(srtToVtt()).pipe(fileStream);
+        } else {
+            logger.info(`Saving subtitle as-is for ${imdbId} in ${language}`);
+            subtitleResponse.data.pipe(fileStream);
+        }
+        
+        return new Promise((resolve, reject) => {
+            fileStream.on('finish', () => {
+                logger.info(`Subtitle file saved to ${cacheFilePath}`);
+                resolve(cacheFilePath);
+            });
+            
+            fileStream.on('error', (err) => {
+                logger.error(`Error saving subtitle file: ${err.message}`);
+                reject(err);
+            });
+        });
+    } catch (error) {
+        logger.error(`Error getting subtitles: ${error.message}`);
+        if (error.response) {
+            logger.error(`Response status: ${error.response.status}`);
+            logger.error(`Response data: ${JSON.stringify(error.response.data)}`);
+        }
+        throw error;
+    }
+}
+
 app.get("/captions/:imdb_code/:torrent_hash", async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;
-
+    const language = req.query.lang || 'en'; // Default to English if not specified
+    
     try {
-        const movie = await knex('movies').where({ imdb_code }).first();
-
-        if (!movie) {
-            return res.status(404).json({ error: "Movie not found" });
+        // First try to get subtitles from OpenSubtitles
+        try {
+            const subtitlePath = await getSubtitles(imdb_code, language);
+            
+            // Stream the subtitle file to the client
+            res.setHeader("Content-Type", "text/vtt");
+            
+            const subtitleStream = fs.createReadStream(subtitlePath);
+            subtitleStream.pipe(res);
+            
+            subtitleStream.on("error", (err) => {
+                logger.error("Error streaming subtitle file: " + err);
+                // Fall back to torrent subtitles
+                streamTorrentSubtitles();
+            });
+            
+            return; // Exit function if OpenSubtitles worked
+        } catch (openSubsError) {
+            logger.warn(`OpenSubtitles error, falling back to torrent subtitles: ${openSubsError.message}`);
+            // Continue to fallback method
         }
+        
+        // Fallback: Use subtitles from the torrent
+        streamTorrentSubtitles();
+        
+        async function streamTorrentSubtitles() {
+            const movie = await knex('movies').where({ imdb_code }).first();
 
-        const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
-        if (!torrentMeta) {
-            return res.status(404).json({ error: "Torrent not found" });
+            if (!movie) {
+                return res.status(404).json({ error: "Movie not found" });
+            }
+
+            const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
+            if (!torrentMeta) {
+                return res.status(404).json({ error: "Torrent not found" });
+            }
+
+            const torrentUrl = torrentMeta.url;
+
+            // Get the torrent instance
+            const torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
+
+            // Find subtitle files (e.g., .srt or .vtt)
+            const subtitleFiles = torrentInstance.files.filter(file =>
+                file.name.endsWith('.srt') || file.name.endsWith('.vtt')
+            );
+
+            if (subtitleFiles.length === 0) {
+                global.torrentManager.releaseReference(torrent_hash);
+                return res.status(404).json({ error: "No subtitles found in torrent" });
+            }
+
+            // Select the first subtitle file (or implement logic to choose based on language)
+            const subtitleFile = subtitleFiles[0];
+
+            // Stream the subtitle file to the client
+            res.setHeader("Content-Type", "text/vtt");
+
+            const stream = subtitleFile.createReadStream();
+
+            // Convert SRT to VTT if necessary
+            if (subtitleFile.name.endsWith('.srt')) {
+                stream.pipe(srtToVtt()).pipe(res);
+            } else {
+                stream.pipe(res);
+            }
+
+            stream.on("error", (err) => {
+                logger.error("Error streaming subtitle file: " + err);
+                global.torrentManager.releaseReference(torrent_hash);
+                res.status(500).json({ error: "Failed to stream subtitles" });
+            });
+
+            stream.on("end", () => {
+                global.torrentManager.releaseReference(torrent_hash);
+            });
         }
-
-        const torrentUrl = torrentMeta.url;
-
-        // Get the torrent instance
-        const torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
-
-        // Find subtitle files (e.g., .srt or .vtt)
-        const subtitleFiles = torrentInstance.files.filter(file =>
-            file.name.endsWith('.srt') || file.name.endsWith('.vtt')
-        );
-
-        if (subtitleFiles.length === 0) {
-            global.torrentManager.releaseReference(torrent_hash);
-            return res.status(404).json({ error: "No subtitles found in torrent" });
-        }
-
-        // Select the first subtitle file (or implement logic to choose based on language)
-        const subtitleFile = subtitleFiles[0];
-
-        // Stream the subtitle file to the client
-        res.setHeader("Content-Type", "text/vtt");
-
-        const stream = subtitleFile.createReadStream();
-
-        // Convert SRT to VTT if necessary
-        if (subtitleFile.name.endsWith('.srt')) {
-            stream.pipe(srtToVtt()).pipe(res);
-        } else {
-            stream.pipe(res);
-        }
-
-        stream.on("error", (err) => {
-            logger.error("Error streaming subtitle file: " + err);
-            global.torrentManager.releaseReference(torrent_hash);
-            res.status(500).json({ error: "Failed to stream subtitles" });
-        });
-
-        stream.on("end", () => {
-            global.torrentManager.releaseReference(torrent_hash);
-        });
     } catch (err) {
         logger.error("Error fetching captions: " + err);
         res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// New endpoint for direct subtitle access (without torrent requirement)
+app.get("/subtitles/:imdb_code", (req, res, next) => {
+    req.knex = knex;
+    next();
+}, Authorization, async (req, res) => {
+    const { imdb_code } = req.params;
+    const language = req.query.lang || 'en'; // Default to English if not specified
+    
+    try {
+        const subtitlePath = await getSubtitles(imdb_code, language);
+        
+        // Stream the subtitle file to the client
+        res.setHeader("Content-Type", "text/vtt");
+        
+        const subtitleStream = fs.createReadStream(subtitlePath);
+        subtitleStream.pipe(res);
+        
+        subtitleStream.on("error", (err) => {
+            logger.error("Error streaming subtitle file: " + err);
+            res.status(500).json({ error: "Failed to stream subtitles" });
+        });
+    } catch (err) {
+        logger.error("Error fetching subtitles: " + err);
+        res.status(404).json({ error: "Subtitles not found" });
     }
 });
 
