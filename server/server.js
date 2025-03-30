@@ -359,11 +359,11 @@ async function getSubtitles(imdbId, language = 'en') {
         // Check if we already have this subtitle cached
         const cacheFilePath = path.join(cacheDir, `${imdbId}_${language}.vtt`);
         if (fs.existsSync(cacheFilePath)) {
-            logger.info(`Using cached subtitle for ${imdbId} in ${language}`);
+            // logger.info(`Using cached subtitle for ${imdbId} in ${language}`);
             return cacheFilePath;
         }
         
-        logger.info(`Searching for subtitles: IMDb ID ${formattedImdbId}, language ${language}`);
+        // logger.info(`Searching for subtitles: IMDb ID ${formattedImdbId}, language ${language}`);
         
         // Search for subtitles - note we're using the proper OpenSubtitles format
         const searchResponse = await axios.get(`${OPENSUBS_API_URL}/subtitles`, {
@@ -380,7 +380,7 @@ async function getSubtitles(imdbId, language = 'en') {
             }
         });
         
-        logger.info(`Search response received, found ${searchResponse.data.data?.length || 0} subtitles`);
+        // logger.info(`Search response received, found ${searchResponse.data.data?.length || 0} subtitles`);
         
         if (!searchResponse.data.data || searchResponse.data.data.length === 0) {
             throw new Error(`No subtitles found for IMDb ID ${formattedImdbId} in language ${language}`);
@@ -400,7 +400,7 @@ async function getSubtitles(imdbId, language = 'en') {
             throw new Error(`No suitable subtitle found for IMDb ID ${formattedImdbId} in language ${language}`);
         }
         
-        logger.info(`Selected subtitle: ${bestSubtitle.attributes.release || 'Unknown release'}`);
+        // logger.info(`Selected subtitle: ${bestSubtitle.attributes.release || 'Unknown release'}`);
         
         // Make sure there are files available
         if (!bestSubtitle.attributes.files || bestSubtitle.attributes.files.length === 0) {
@@ -408,7 +408,7 @@ async function getSubtitles(imdbId, language = 'en') {
         }
         
         // Download subtitle file
-        logger.info(`Downloading subtitle file_id: ${bestSubtitle.attributes.files[0].file_id}`);
+        // logger.info(`Downloading subtitle file_id: ${bestSubtitle.attributes.files[0].file_id}`);
         
         const downloadResponse = await axios.post(
             `${OPENSUBS_API_URL}/download`,
@@ -426,7 +426,7 @@ async function getSubtitles(imdbId, language = 'en') {
         
         // Download the actual subtitle file
         const subtitleFileUrl = downloadResponse.data.link;
-        logger.info(`Subtitle download URL: ${subtitleFileUrl}`);
+        // logger.info(`Subtitle download URL: ${subtitleFileUrl}`);
         
         const subtitleResponse = await axios.get(subtitleFileUrl, { 
             responseType: 'stream',
@@ -440,10 +440,10 @@ async function getSubtitles(imdbId, language = 'en') {
         
         if (subtitleFileUrl.endsWith('.srt')) {
             // Convert SRT to VTT
-            logger.info(`Converting SRT to VTT for ${imdbId} in ${language}`);
+            // logger.info(`Converting SRT to VTT for ${imdbId} in ${language}`);
             subtitleResponse.data.pipe(srtToVtt()).pipe(fileStream);
         } else {
-            logger.info(`Saving subtitle as-is for ${imdbId} in ${language}`);
+            // logger.info(`Saving subtitle as-is for ${imdbId} in ${language}`);
             subtitleResponse.data.pipe(fileStream);
         }
         
@@ -557,10 +557,7 @@ app.get("/captions/:imdb_code/:torrent_hash", async (req, res) => {
 });
 
 // New endpoint for direct subtitle access (without torrent requirement)
-app.get("/subtitles/:imdb_code", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, async (req, res) => {
+app.get("/subtitles/:imdb_code", async (req, res) => {
     const { imdb_code } = req.params;
     const language = req.query.lang || 'en'; // Default to English if not specified
     
