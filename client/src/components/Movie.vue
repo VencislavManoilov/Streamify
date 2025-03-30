@@ -163,6 +163,18 @@ export default {
                                 ],
                                 seekTime: 10, // Set the seek time to 10 seconds for forward/backward skips
                             });
+
+                            // Apply custom styles for larger subtitles
+                            const style = document.createElement('style');
+                            style.innerHTML = `
+                                .plyr__captions {
+                                    font-size: 1.8rem !important; /* Increase subtitle font size */
+                                    color: white !important;
+                                    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7) !important;
+                                }
+                            `;
+                            document.head.appendChild(style);
+
                             // Set event listeners on the underlying video element
                             videoElement.addEventListener('playing', () => {
                                 this.isVideoLoaded = true;
