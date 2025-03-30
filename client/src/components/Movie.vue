@@ -24,8 +24,8 @@
             <div class="video-container">
                 <video id="movie-player" class="video-js vjs-default-skin" controls>
                     <source v-if="videoSrc" :src="videoSrc" :key="videoSrc" type="video/mp4" />
-                    <!-- <track :src="subtitesSrc" kind="subtitles" srclang="bg" label="Bulgarian" /> -->
-                    <track v-if="subtitesSrc" :src="subtitesSrc" kind="subtitles" srclang="en" label="English" default />
+                    <track v-if="subtitlesEnSrc" :src="subtitlesEnSrc" kind="subtitles" srclang="en" label="English" default />
+                    <track v-if="subtitlesBgSrc" :src="subtitlesBgSrc" kind="subtitles" srclang="bg" label="Bulgarian" />
                     Your browser does not support the video tag.
                 </video>
                 <div v-if="!selectedTorrent" class="overlay">Select Resolution</div>
@@ -80,8 +80,11 @@ export default {
         videoSrc() {
             return this.selectedTorrent ? `${URL}/stream/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
         },
-        subtitesSrc() {
-            return this.selectedTorrent ? `/captions/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
+        subtitlesEnSrc() {
+            return this.selectedTorrent && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=en` : '';
+        },
+        subtitlesBgSrc() {
+            return this.selectedTorrent && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=bg` : '';
         },
         isMobile() {
             return window.innerWidth < 768;
@@ -207,8 +210,13 @@ export default {
                                 kind: 'subtitles',
                                 label: 'English',
                                 srclang: 'en',
-                                src: this.subtitesSrc,
-                                default: true
+                                src: this.subtitlesEnSrc,
+                            },
+                            {
+                                kind: 'subtitles',
+                                label: 'Bulgarian',
+                                srclang: 'bg',
+                                src: this.subtitlesBgSrc
                             }
                         ]
                     };
@@ -220,10 +228,10 @@ export default {
                     });
 
                     this.player.on('ready', () => {
-                        const track = this.player.elements.container.querySelector('track');
-                        if (track) {
-                            track.mode = 'showing';
-                        }
+                        // const tracks = this.player.elements.container.querySelectorAll('track');
+                        // tracks.forEach(track => {
+                        //     track.mode = track.srclang === 'en' ? 'showing' : 'hidden';
+                        // });
                         this.player.toggleCaptions(true);
                     });
                 }
