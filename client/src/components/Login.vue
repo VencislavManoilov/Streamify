@@ -11,6 +11,9 @@
                     <label for="password">Password</label>
                     <input type="password" id="password" v-model="password" required />
                 </div>
+                <div class="error">
+                    <p v-if="error" class="error-message">{{ error }}</p>
+                </div>
                 <button type="submit">Login</button>
             </form>
         </div>
@@ -32,7 +35,8 @@ export default {
                 container: 'container',
                 form: 'form',
                 formGroup: 'formGroup'
-            }
+            },
+            error: ''
         };
     },
     methods: {
@@ -45,8 +49,9 @@ export default {
 
                 localStorage.setItem('token', response.data.token);
                 window.location.reload();
-            } catch (error) {
-                console.error('There was an error!', error);
+            } catch (err) {
+                console.error('There was an error!', err);
+                this.error = err.response.data.message || err.response.data || 'An error occurred. Please try again.';
             }
         }
     }
@@ -114,5 +119,9 @@ export default {
 
 .register button:hover {
     background-color: #0056b3;
+}
+
+.error {
+    color: red;
 }
 </style>
