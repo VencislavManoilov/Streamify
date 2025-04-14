@@ -46,16 +46,24 @@ router.post('/register', async (req, res) => {
 // Login route
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
-    await req.knex('users').where({ email }).first().then(user => {
-        if (user && bcrypt.compare(password, user.password)) {
-            const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
-            res.json({ token });
-        } else {
-            res.status(401).send('Invalid credentials');
+    try {
+        const user = await req.knex('users').where({ email }).first();
+        
+        if (!user) {
+            return res.status(401).send('Invalid credentials');
         }
-    }).catch(err => {
-        res.status(500).send('Internal Server Error');
-    })
+        
+        const passwordMatch = await bcrypt.compare(password, user.password);
+        
+        if (passwordMatch) {
+            const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+            return res.json({ token });
+        } else {
+            return res.status(401).send('Invalid credentials');
+        }
+    } catch (err) {
+        return res.status(500).send('Internal Server Error');
+    }
 });
 
 router.get('/me', Authorization, async (req, res) => {
