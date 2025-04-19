@@ -15,8 +15,18 @@ const path = require('path');
 
 const PORT = 8080;
 
+const allowedOrigins = process.env.CORS_ORIGIN
+    ? JSON.parse(process.env.CORS_ORIGIN)
+    : ["http://localhost:3000"];
+
 app.use(cors({
-    origin: process.env.CORS_ORIGIN ? JSON.parse(process.env.CORS_ORIGIN) : "http://localhost:3000"
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error("Not allowed by CORS"));
+        }
+    },
 }));
 
 dotenv.config();
