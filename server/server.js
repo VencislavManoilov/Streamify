@@ -15,6 +15,8 @@ const path = require('path');
 
 const PORT = 8080;
 
+app.set('trust proxy', true);
+
 const allowedOrigins = process.env.CORS_ORIGIN
     ? JSON.parse(process.env.CORS_ORIGIN)
     : ["http://localhost:3000"];
