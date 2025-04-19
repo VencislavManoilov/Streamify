@@ -43,7 +43,12 @@ export default {
             scrollLeft: 0,
             clickPrevented: false,
             selectedMovie: null,
-            lastDragTime: 0
+            lastDragTime: 0,
+            // New properties for inertia scrolling
+            scrollAnimationId: null,
+            lastScrollLeft: 0,
+            scrollVelocity: 0,
+            lastTimestamp: 0
         };
     },
     props: {
@@ -54,6 +59,12 @@ export default {
     },
     methods: {
         startDrag(e) {
+            // Cancel any ongoing inertia scrolling
+            if (this.scrollAnimationId) {
+                cancelAnimationFrame(this.scrollAnimationId);
+                this.scrollAnimationId = null;
+            }
+            
             this.isDragging = true; 
             const container = this.$refs[this.category.name];
             if (!container) return;
@@ -61,6 +72,10 @@ export default {
             this.startX = pageX - container.offsetLeft;
             this.scrollLeft = container.scrollLeft;
             this.clickPrevented = false;
+            
+            // Initialize for velocity tracking
+            this.lastScrollLeft = container.scrollLeft;
+            this.lastTimestamp = Date.now();
         },
         onDrag(e) {
             if (!this.isDragging) return;
@@ -75,13 +90,61 @@ export default {
             const walk = x - this.startX;
             container.scrollLeft = this.scrollLeft - walk;
             
+            // Track scrolling velocity
+            const now = Date.now();
+            const elapsed = now - this.lastTimestamp;
+            
+            if (elapsed > 0) {
+                // Calculate pixels per millisecond
+                this.scrollVelocity = (container.scrollLeft - this.lastScrollLeft) / elapsed;
+                this.lastScrollLeft = container.scrollLeft;
+                this.lastTimestamp = now;
+            }
+            
             if (Math.abs(walk) > 5) {
                 this.clickPrevented = true;
-                this.lastDragTime = Date.now();
+                this.lastDragTime = now;
             }
         },
         stopDrag() {
+            if (!this.isDragging) return;
             this.isDragging = false;
+            
+            // Start inertia scrolling if there's significant velocity
+            if (Math.abs(this.scrollVelocity) > 0.1) {
+                this.startInertiaScroll();
+            }
+        },
+        startInertiaScroll() {
+            const container = this.$refs[this.category.name];
+            if (!container) return;
+            
+            // Initial velocity from drag (pixels per ms)
+            let velocity = this.scrollVelocity * 15; // Amplify for better feel
+            const friction = 0.95; // Friction factor (0-1), higher = less friction
+            const minVelocity = 0.1; // Minimum velocity to continue animation
+            
+            const animate = () => {
+                if (Math.abs(velocity) < minVelocity) {
+                    this.scrollAnimationId = null;
+                    return;
+                }
+                
+                // Apply friction to slow down
+                velocity *= friction;
+                
+                // Apply scrolling
+                container.scrollLeft += velocity;
+                
+                // Continue animation
+                this.scrollAnimationId = requestAnimationFrame(animate);
+                
+                // Update last drag time to prevent accidental clicks
+                this.lastDragTime = Date.now();
+            };
+            
+            // Start animation
+            this.scrollAnimationId = requestAnimationFrame(animate);
         },
         handleClick(event) {
             if (this.clickPrevented) {
@@ -105,6 +168,12 @@ export default {
             const container = this.$refs[this.category.name];
             if (!container) return;
             
+            // Cancel any ongoing inertia scrolling on manual wheel input
+            if (this.scrollAnimationId) {
+                cancelAnimationFrame(this.scrollAnimationId);
+                this.scrollAnimationId = null;
+            }
+            
             // Only handle horizontal scrolling or vertical when shift is pressed
             if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {
                 e.preventDefault();
@@ -112,6 +181,12 @@ export default {
                 this.lastDragTime = Date.now();
             }
             // Let vertical scrolling pass through to the page normally
+        }
+    },
+    // Ensure we clean up any animations when component is destroyed
+    beforeUnmount() {
+        if (this.scrollAnimationId) {
+            cancelAnimationFrame(this.scrollAnimationId);
         }
     }
 }
