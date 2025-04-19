@@ -1,4 +1,5 @@
-FROM node:16-alpine
+# Build stage
+FROM node:16-alpine as build-stage
 
 WORKDIR /app
 
@@ -7,16 +8,21 @@ RUN npm install
 
 COPY . .
 
-# Copy the .env file
-COPY .env .env
+# Copy the .env file if it exists, otherwise use .env.example
+COPY .env* ./
 
-# Load environment variables and build the Vue.js application
-RUN npm install dotenv && npm run build
+# Build the app
+RUN npm run build
 
-# Install a simple static file server to serve the built files
-RUN npm install -g serve
+# Production stage with Nginx
+FROM nginx:stable-alpine as production-stage
+
+# Copy nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built files from the build stage
+COPY --from=build-stage /app/dist /usr/share/nginx/html
 
 EXPOSE 3000
 
-# Serve the built files
-CMD ["serve", "-s", "dist"]
+CMD ["nginx", "-g", "daemon off;"]
