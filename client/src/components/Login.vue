@@ -121,6 +121,29 @@ export default {
     background-color: #0056b3;
 }
 
+@media (max-width: 550px) {
+    .container > div {
+        min-width: 100%;
+    }
+
+    .register h2 {
+        font-size: 36px;
+    }
+
+    .register label {
+        font-size: 24px;
+    }
+    
+    .register input {
+        font-size: 18px;
+    }
+
+    .register button {
+        font-size: 18px;
+        margin-top: 5px;
+    }
+}
+
 .error {
     color: red;
 }
