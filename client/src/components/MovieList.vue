@@ -10,9 +10,10 @@
         @touchmove="onDrag($event)"
         @touchend="stopDrag"
         @touchcancel="stopDrag"
+        @wheel="handleWheel"
     >
-        <div v-for="movie in category.movies" :key="movie.title" class="movie" @click="handleClick">
-            <button v-on:click="selectedMovie = movie">
+        <div v-for="movie in category.movies" :key="movie.title" class="movie">
+            <button @click="movieClick(movie, $event)">
                 <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" />
             </button>
         </div>
@@ -41,7 +42,8 @@ export default {
             startX: 0,
             scrollLeft: 0,
             clickPrevented: false,
-            selectedMovie: null
+            selectedMovie: null,
+            lastDragTime: 0
         };
     },
     props: {
@@ -62,14 +64,21 @@ export default {
         },
         onDrag(e) {
             if (!this.isDragging) return;
-            e.preventDefault();
+            // Prevent default for mouse events but not touch events
+            if (!e.touches) {
+                e.preventDefault();
+            }
             const container = this.$refs[this.category.name];
             if (!container) return;
             const pageX = e.touches ? e.touches[0].pageX : e.pageX;
             const x = pageX - container.offsetLeft;
-            const walk = (x - this.startX) * 2; // scroll-fast
+            const walk = x - this.startX;
             container.scrollLeft = this.scrollLeft - walk;
-            this.clickPrevented = true;
+            
+            if (Math.abs(walk) > 5) {
+                this.clickPrevented = true;
+                this.lastDragTime = Date.now();
+            }
         },
         stopDrag() {
             this.isDragging = false;
@@ -79,6 +88,30 @@ export default {
                 event.preventDefault();
                 this.clickPrevented = false;
             }
+        },
+        movieClick(movie, event) {
+            // Prevent selecting a movie if we recently stopped dragging
+            const timeSinceDrag = Date.now() - this.lastDragTime;
+            if (this.clickPrevented || timeSinceDrag < 300) {
+                event.preventDefault();
+                event.stopPropagation();
+                this.clickPrevented = false;
+                return;
+            }
+            
+            this.selectedMovie = movie;
+        },
+        handleWheel(e) {
+            const container = this.$refs[this.category.name];
+            if (!container) return;
+            
+            // Only handle horizontal scrolling or vertical when shift is pressed
+            if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {
+                e.preventDefault();
+                container.scrollLeft += e.deltaX || (e.shiftKey ? e.deltaY : 0);
+                this.lastDragTime = Date.now();
+            }
+            // Let vertical scrolling pass through to the page normally
         }
     }
 }
@@ -95,7 +128,20 @@ h1 {
     display: flex;
     flex-direction: row;
     width: 100%;
-    overflow-x: hidden;
+    overflow-x: scroll;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE and Edge */
+    -webkit-overflow-scrolling: touch;
+    cursor: grab;
+    
+    /* Hardware acceleration for smoother scrolling */
+    transform: translateZ(0);
+    will-change: transform;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.movies::-webkit-scrollbar {
+    display: none;
 }
 
 .movies:active {
