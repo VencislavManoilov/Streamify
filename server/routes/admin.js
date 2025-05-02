@@ -259,6 +259,65 @@ router.post('/invite', Authorization, async (req, res) => {
     });
 });
 
+router.post("/request-access", async (req, res) => {
+    const { email } = req.body;
+
+    if(!email) {
+        return res.status(400).send('Email is required');
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: 'Invalid email' });
+    }
+
+    const URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    const adminUser = await req.knex('users').where({ role: 'admin' }).first();
+    if (!adminUser) {
+        return logger.warn("No admin user found. Please create an admin account.");
+    }
+
+    // Send email using nodemailer
+    const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: adminUser.email,
+        subject: 'Request Access to Streamify',
+        text: `User has requested access to join Streamify. To accept the the request open this link ${URL}/admin/panel and invite user with this email "${email}"`,
+        html: `
+            <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                <h2 style="color: #333;">Request Access to Streamify</h2>
+                <p>
+                    User has requested access to join Streamify.
+                </p>
+                <p>
+                    To accept the the request click on the button below and invite the user with this email:
+                </p>
+                <p>
+                    <strong>${email}</strong>
+                </p>
+                <p style="text-align: center;">
+                    <a href="${URL}/admin/panel" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Open Admin</a>
+                </p>
+                <p>
+                    Best regards,<br>
+                    The Streamify's Email Bot
+                </p>
+            </div>
+        `
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+        if(error){
+            logger.error(error);
+            return res.status(500).json({ message : 'Error sending email' });
+        }
+
+        return res.status(200).json({ message: "Email sent! Please, don't send multiple times!" });
+    });
+});
+
 router.get("/logs", Authorization, async (req, res) => {
     const { level, count } = req.query;
     
