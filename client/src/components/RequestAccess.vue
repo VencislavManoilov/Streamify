@@ -1,20 +1,19 @@
 <template>
     <div class="container" @click.self="$emit('close')">
         <div>
-            <form @submit.prevent="handleLogin" class="register">
-                <h2>Login</h2>
+            <form @submit.prevent="handleRequest" class="register">
+                <h2>Request Account Access</h2>
                 <div class="form-group">
                     <label for="email">Email</label>
                     <input type="email" id="email" v-model="email" required />
                 </div>
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <input type="password" id="password" v-model="password" required />
+                <div class="message" :class="{ 'error': error, 'success': success }">
+                    <p v-if="error || success">{{ message }}</p>
                 </div>
-                <div class="error">
-                    <p v-if="error" class="error-message">{{ error }}</p>
+                <div v-if="loading" class="loading-container">
+                    <div class="loading-spinner"></div>
                 </div>
-                <button type="submit">Login</button>
+                <button v-if="!loading && !success" type="submit">Submit Request</button>
             </form>
         </div>
     </div>
@@ -26,32 +25,36 @@ import axios from 'axios';
 const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
 
 export default {
-    name: "LoginPage",
+    name: "RequestAccess",
     data() {
         return {
             email: '',
-            password: '',
-            styles: {
-                container: 'container',
-                form: 'form',
-                formGroup: 'formGroup'
-            },
-            error: ''
+            loading: false,
+            error: false,
+            success: false,
+            message: ''
         };
     },
     methods: {
-        async handleLogin() {
+        async handleRequest() {
+            this.loading = true;
+            this.error = false;
+            this.success = false;
+            this.message = '';
+            
             try {
-                const response = await axios.post(URL+'/auth/login', {
-                    email: this.email,
-                    password: this.password
-                })
-
-                localStorage.setItem('token', response.data.token);
-                window.location.reload();
+                const response = await axios.post(URL + '/admin/request-access', {
+                    email: this.email
+                });
+                
+                this.success = true;
+                this.message = response.data.message || 'Request submitted successfully!';
             } catch (err) {
                 console.error('There was an error!', err);
-                this.error = err.response.data.message || err.response.data || 'An error occurred. Please try again.';
+                this.error = true;
+                this.message = err.response?.data?.message || 'An error occurred. Please try again.';
+            } finally {
+                this.loading = false;
             }
         }
     }
@@ -59,7 +62,6 @@ export default {
 </script>
 
 <style scoped>
-
 .container {
     position: fixed;
     top: 0;
@@ -121,6 +123,39 @@ export default {
     background-color: #0056b3;
 }
 
+.message {
+    text-align: center;
+    padding: 5px;
+}
+
+.error {
+    color: red;
+}
+
+.success {
+    color: green;
+}
+
+.loading-container {
+    display: flex;
+    justify-content: center;
+    padding: 10px 0;
+}
+
+.loading-spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #007bff;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
 @media (max-width: 550px) {
     .container > div {
         min-width: 100%;
@@ -142,9 +177,5 @@ export default {
         font-size: 18px;
         margin-top: 5px;
     }
-}
-
-.error {
-    color: red;
 }
 </style>

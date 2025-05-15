@@ -24,15 +24,60 @@
             <div class="video-container">
                 <video id="movie-player" class="video-js vjs-default-skin" controls>
                     <source v-if="videoSrc" :src="videoSrc" :key="videoSrc" type="video/mp4" />
-                    <!-- <track :src="subtitesSrc" kind="subtitles" srclang="bg" label="Bulgarian" /> -->
-                    <track v-if="subtitesSrc" :src="subtitesSrc" kind="subtitles" srclang="en" label="English" default />
+                    <track v-if="subtitlesEnSrc" :src="subtitlesEnSrc" kind="subtitles" srclang="en" label="English" default />
+                    <track v-if="subtitlesBgSrc" :src="subtitlesBgSrc" kind="subtitles" srclang="bg" label="Bulgarian" />
                     Your browser does not support the video tag.
                 </video>
                 <div v-if="!selectedTorrent" class="overlay">Select Resolution</div>
                 <div v-if="selectedTorrent && !isVideoLoaded" class="overlay loading">
                     <div class="spinner"></div>
                 </div>
+                
+                <!-- Subtitle settings modal -->
+                <div v-if="showSubtitleSettings" class="subtitle-settings-modal" @click.self="showSubtitleSettings = false">
+                    <div class="subtitle-settings-container">
+                        <h3>Subtitle Settings</h3>
+                        <div class="setting-group">
+                            <label>Font Size</label>
+                            <div class="setting-controls">
+                                <button @click="changeFontSize(-0.1)">-</button>
+                                <span>{{ (subtitleSettings.fontSize * 100).toFixed(0) }}%</span>
+                                <button @click="changeFontSize(0.1)">+</button>
+                            </div>
+                        </div>
+                        
+                        <div class="setting-group">
+                            <label>Background Opacity</label>
+                            <div class="setting-controls">
+                                <button @click="changeBackgroundOpacity(-0.1)">-</button>
+                                <span>{{ (subtitleSettings.bgOpacity * 100).toFixed(0) }}%</span>
+                                <button @click="changeBackgroundOpacity(0.1)">+</button>
+                            </div>
+                        </div>
+                        
+                        <div class="setting-group">
+                            <label>Text Color</label>
+                            <div class="color-options">
+                                <span 
+                                    v-for="color in colors" 
+                                    :key="color" 
+                                    :style="{ backgroundColor: color }" 
+                                    class="color-option"
+                                    :class="{ active: subtitleSettings.color === color }"
+                                    @click="subtitleSettings.color = color; applySubtitleSettings()"
+                                ></span>
+                            </div>
+                        </div>
+                        
+                        <button class="close-btn" @click="showSubtitleSettings = false">Close</button>
+                    </div>
+                </div>
             </div>
+            
+            <!-- Subtitle settings button -->
+            <button v-if="selectedTorrent" class="subtitle-settings-btn" @click="showSubtitleSettings = true">
+                Subtitle Settings
+            </button>
     
             <div class="movie-info">
                 <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> {{ movie.rating }} / 10</p>
@@ -73,15 +118,25 @@ export default {
             player: null,
             loadError: null,
             searchQuery: '',
-            keyboardListener: null
+            keyboardListener: null,
+            showSubtitleSettings: false,
+            subtitleSettings: {
+                fontSize: 1.0,       // multiplier for default size
+                bgOpacity: 0.5,      // background opacity 0-1
+                color: '#ffffff'     // text color
+            },
+            colors: ['#ffffff', '#ffff00', '#00ff00', '#00ffff', '#ff00ff']
         };
     },
     computed: {
         videoSrc() {
             return this.selectedTorrent ? `${URL}/stream/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
         },
-        subtitesSrc() {
-            return this.selectedTorrent ? `/captions/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
+        subtitlesEnSrc() {
+            return this.selectedTorrent && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=en` : '';
+        },
+        subtitlesBgSrc() {
+            return this.selectedTorrent && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=bg` : '';
         },
         isMobile() {
             return window.innerWidth < 768;
@@ -141,25 +196,32 @@ export default {
                     const videoElement = document.getElementById('movie-player');
                     if (videoElement) {
                         if (!this.isMobile) {
+                            this.loadSavedSubtitleSettings();
+                            
                             this.player = new Plyr(videoElement, {
                                 keyboard: { focused: false, global: true },
                                 captions: { active: true, update: true },
                                 controls: [
-                                    'play-large', // The large play button in the center
-                                    'rewind', // Rewind by 10 seconds
-                                    'play', // Play/pause playback
-                                    'fast-forward', // Fast forward by 10 seconds
-                                    'progress', // The progress bar and scrubber
-                                    'current-time', // The current time display
-                                    'duration', // The full duration display
-                                    'mute', // Toggle mute
-                                    'volume', // Volume control
-                                    'captions', // Toggle captions
-                                    'settings', // Settings menu
-                                    'fullscreen' // Toggle fullscreen
+                                    'play-large', 
+                                    'rewind', 
+                                    'play', 
+                                    'fast-forward', 
+                                    'progress', 
+                                    'current-time', 
+                                    'duration', 
+                                    'mute', 
+                                    'volume', 
+                                    'captions', 
+                                    'settings', 
+                                    'fullscreen' 
                                 ],
-                                seekTime: 10, // Set the seek time to 10 seconds for forward/backward skips
+                                seekTime: 10,
+                                settings: ['captions', 'quality', 'speed']
                             });
+
+                            // Apply custom styles
+                            this.applySubtitleSettings();
+
                             // Set event listeners on the underlying video element
                             videoElement.addEventListener('playing', () => {
                                 this.isVideoLoaded = true;
@@ -207,8 +269,13 @@ export default {
                                 kind: 'subtitles',
                                 label: 'English',
                                 srclang: 'en',
-                                src: this.subtitesSrc,
-                                default: true
+                                src: this.subtitlesEnSrc,
+                            },
+                            {
+                                kind: 'subtitles',
+                                label: 'Bulgarian',
+                                srclang: 'bg',
+                                src: this.subtitlesBgSrc
                             }
                         ]
                     };
@@ -220,11 +287,8 @@ export default {
                     });
 
                     this.player.on('ready', () => {
-                        const track = this.player.elements.container.querySelector('track');
-                        if (track) {
-                            track.mode = 'showing';
-                        }
                         this.player.toggleCaptions(true);
+                        this.applySubtitleSettings();
                     });
                 }
             } else {
@@ -268,7 +332,60 @@ export default {
             } catch (error) {
                 alert(`There was an error! \n${error.response.data.message || error.response.data || 'An error occurred'}`);
             }
+        },
+        changeFontSize(delta) {
+            this.subtitleSettings.fontSize = Math.max(0.5, Math.min(2.0, this.subtitleSettings.fontSize + delta));
+            this.applySubtitleSettings();
+        },
+        
+        changeBackgroundOpacity(delta) {
+            this.subtitleSettings.bgOpacity = Math.max(0, Math.min(1, this.subtitleSettings.bgOpacity + delta));
+            this.applySubtitleSettings();
+        },
+        
+        applySubtitleSettings() {
+            if (!this.player) return;
+            
+            // Save settings to localStorage
+            localStorage.setItem('subtitleSettings', JSON.stringify(this.subtitleSettings));
+            
+            // Apply settings through CSS
+            const fontSize = this.subtitleSettings.fontSize * 1.8; // Base size is 1.8rem
+            const bgOpacity = this.subtitleSettings.bgOpacity;
+            const color = this.subtitleSettings.color;
+            
+            const styleEl = document.getElementById('plyr-subtitle-styles') || document.createElement('style');
+            styleEl.id = 'plyr-subtitle-styles';
+            styleEl.innerHTML = `
+                .plyr__captions {
+                    font-size: ${fontSize}rem !important;
+                    color: ${color} !important;
+                    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7) !important;
+                }
+                .plyr__captions span {
+                    background-color: rgba(0, 0, 0, ${bgOpacity}) !important;
+                    padding: 2px 8px !important;
+                }
+            `;
+            
+            if (!document.getElementById('plyr-subtitle-styles')) {
+                document.head.appendChild(styleEl);
+            }
+        },
+        
+        loadSavedSubtitleSettings() {
+            const savedSettings = localStorage.getItem('subtitleSettings');
+            if (savedSettings) {
+                try {
+                    this.subtitleSettings = JSON.parse(savedSettings);
+                } catch (e) {
+                    console.error('Error parsing saved subtitle settings', e);
+                }
+            }
         }
+    },
+    created() {
+        this.loadSavedSubtitleSettings();
     },
     beforeUnmount() {
         if (this.player) {
@@ -500,5 +617,105 @@ export default {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+.subtitle-settings-btn {
+    margin-top: 10px;
+    padding: 8px 16px;
+    background-color: #333;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.subtitle-settings-btn:hover {
+    background-color: #444;
+}
+
+.subtitle-settings-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.subtitle-settings-container {
+    background-color: #222;
+    border-radius: 8px;
+    padding: 20px;
+    width: 90%;
+    max-width: 400px;
+}
+
+.subtitle-settings-container h3 {
+    margin-top: 0;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.setting-group {
+    margin-bottom: 20px;
+}
+
+.setting-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+.setting-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.setting-controls button {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+    background-color: #444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.color-options {
+    display: flex;
+    justify-content: space-between;
+}
+
+.color-option {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+}
+
+.color-option.active {
+    border-color: #fff;
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+}
+
+.close-btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    background-color: #444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 10px;
 }
 </style>

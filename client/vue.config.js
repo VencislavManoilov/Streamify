@@ -7,6 +7,10 @@ module.exports = defineConfig({
       '/captions': {
         target: 'http://localhost:8080', // Backend URL
         changeOrigin: true
+      },
+      '/subtitles': {
+        target: 'http://localhost:8080', // Backend URL
+        changeOrigin: true
       }
     }
   }
