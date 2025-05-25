@@ -569,7 +569,7 @@ app.get("/subtitles/:imdb_code", async (req, res) => {
             return await streamTorrentSubtitles(imdb_code, res);
         }
     } catch (err) {
-        return logger.error("Error streaming torrent subtitles: " + err);
+        logger.error("Error streaming torrent subtitles: " + err);
     }
     
     try {
