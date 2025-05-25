@@ -483,10 +483,10 @@ async function getSubtitles(imdbId, language = 'en') {
 async function streamTorrentSubtitles(imdb_code, res) {
     const movie = await knex('movies').where({ imdb_code }).first();
 
-    if (!movie) return;
+    if (!movie) throw new Error("Movie not found");
 
     const torrentMeta = movie.torrents[0];
-    if (!torrentMeta) return;
+    if (!torrentMeta) throw new Error("No torrent metadata found for this movie");
     const torrent_hash = torrentMeta.hash;
     
     const torrentUrl = torrentMeta.url;
@@ -504,11 +504,13 @@ async function streamTorrentSubtitles(imdb_code, res) {
     
         if (subtitleFiles.length === 0) {
             global.torrentManager.releaseReference(torrent_hash);
-            return logger.error("No subtitles found in torrent");
+            logger.error("No subtitles found in torrent");
+            throw new Error("No subtitles found in torrent");
         }
     } catch (err) {
         global.torrentManager.releaseReference(torrent_hash);
-        return logger.error("Error getting torrent instance: " + err);
+        logger.error("Error getting torrent instance: " + err);
+        throw new Error("Failed to get torrent instance: " + err.message);
     }
 
     // Stream the subtitle file to the client
