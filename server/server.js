@@ -15,6 +15,35 @@ const path = require('path');
 
 const PORT = 8080;
 
+const http = require('http');
+const WebSocket = require('ws');
+
+// Create HTTP server from your Express app
+const server = http.createServer(app);
+
+// Create WebSocket server that uses your HTTP server
+const wss = new WebSocket.Server({ server });
+
+// Handle WebSocket connections
+wss.on('connection', (ws, req) => {
+    // Basic connection setup
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+});
+
+// Keep-alive ping (prevents connections from timing out)
+setInterval(() => {
+    wss.clients.forEach(ws => {
+        if (ws.isAlive === false) return ws.terminate();
+        ws.isAlive = false;
+        ws.ping();
+    });
+}, 30000);
+
+// Make the WebSocket server available to routes
+app.wss = wss;
+app.locals.knex = knex;
+
 app.set('trust proxy', true);
 
 const allowedOrigins = process.env.CORS_ORIGIN
@@ -99,6 +128,7 @@ app.use('/admin', async (req, res, next) => {
     req.nextRefresh = nextRefresh;
     next();
 }, adminRoute);
+adminRoute.ws(app);
 
 const authRoute = require('./routes/auth');
 app.use('/auth', async (req, res, next) => {
@@ -890,7 +920,7 @@ function nextRefresh() {
                 logger.info("http://localhost:3000/admin/auth");
             }
 
-            app.listen(PORT, () => {
+            server.listen(PORT, () => {
                 logger.info(`Server is running on port ${PORT}`);
             });
         });
