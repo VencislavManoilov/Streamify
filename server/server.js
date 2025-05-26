@@ -823,7 +823,7 @@ function nextRefresh() {
         // Clean up idle torrents every 10 minutes
         setInterval(() => {
             torrentManager.cleanupIdleTorrents();
-        }, 10 * 60 * 1000);
+        }, torrentManager.timeForCleanup);
 
         // Make torrentManager available globally
         global.torrentManager = torrentManager;

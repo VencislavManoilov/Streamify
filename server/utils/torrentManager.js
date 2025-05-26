@@ -4,6 +4,7 @@ class TorrentManager {
     constructor(torrentClient) {
         this.torrentClient = torrentClient;
         this.activeTorrents = new Map(); // Map torrent hash to {torrent, refCount, lastAccessed}
+        this.timeForCleanup = 30 * 60 * 1000; // 30 minutes - pretty generous for cleanup
     }
 
     async getTorrent(torrentUrl, torrentHash) {
@@ -128,7 +129,7 @@ class TorrentManager {
     cleanupIdleTorrents() {
         const now = Date.now();
         for (const [hash, entry] of this.activeTorrents.entries()) {
-            if (entry.refCount <= 0 && now - entry.lastAccessed > 15 * 60 * 1000) {
+            if (entry.refCount <= 0 && now - entry.lastAccessed > this.timeForCleanup) {
                 this.removeTorrent(hash);
             }
         }
