@@ -172,9 +172,11 @@ export default {
         }
         this.fetchUsers();
 
-        setInterval(() => {
-            this.getLogs();
-        }, 1000);
+        this.connectToLogWS(localStorage.getItem('token'));
+
+        // setInterval(() => {
+        //     this.getLogs();
+        // }, 1000);
     },
     methods: {
         async fetchUsers() {
@@ -251,6 +253,38 @@ export default {
             } catch (error) {
                 console.error('Error fetching logs:', error);
             }
+        },
+        connectToLogWS(token) {
+            const wsProtocol = URL.startsWith('https') ? 'wss' : 'ws';
+            const wsUrl = URL.replace(/^https?:\/\//, '');
+            const ws = new WebSocket(`${wsProtocol}://${wsUrl}/admin/logs-ws?token=${token}`);
+            
+            ws.onopen = () => {
+                console.log('Connected to WebSocket for logs');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'initialLogs') {
+                    console.log('Received initial logs', data.logs);
+                    this.logs = data.logs;
+                } else if (data.type === 'newLog') {
+                    this.logs.push(data.log);
+                } else if (data.type === 'error') {
+                    console.error('WebSocket error:', data.message);
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('Logs WebSocket connection closed');
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+            
+            return ws;
         },
         scrollToBottom() {
             if (this.$refs.logsContainer) {
