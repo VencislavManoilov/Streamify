@@ -28,7 +28,12 @@
                     <track v-if="subtitlesBgSrc" :src="subtitlesBgSrc" kind="subtitles" srclang="bg" label="Bulgarian" />
                     Your browser does not support the video tag.
                 </video>
-                <div v-if="!showTorrents && selectedTorrent && !start" class="overlay" @click="startMovie">Play</div>
+                <div v-if="!showTorrents && selectedTorrent && !start" class="overlay" @click="startMovie">
+                    <svg class="play-button" width="80" height="80" viewBox="0 0 80 80">
+                        <circle cx="40" cy="40" r="38" fill="rgba(0, 0, 0, 0.5)" stroke="white" stroke-width="2" />
+                        <polygon points="30,25 55,40 30,55" fill="white" />
+                    </svg>
+                </div>
                 <div v-if="showTorrents && selectedTorrent && !start" class="overlay" @click="startMovie">Select Resolution</div>
                 <div v-if="selectedTorrent && start && !isVideoLoaded" class="overlay loading">
                     <div class="spinner"></div>
@@ -157,7 +162,6 @@ export default {
             const bestTorrent = response.data.movie.torrents.find(torrent => torrent.quality == '1080p' && torrent.video_codec == 'x264') || response.data.movie.torrents.find(torrent => torrent.quality == "1080p") || response.data.movie.torrents[0];
             
             await this.selectTorrent(bestTorrent.hash);
-            console.log('Selected torrent succesfully:', bestTorrent.quality, bestTorrent.video_codec, bestTorrent.type, bestTorrent.hash);
         }).catch(error => {
             console.error('There was an error!', error);
         });
@@ -325,7 +329,6 @@ export default {
 
             try {
                 await axios.get(URL+"/preload/" + this.movie.imdb_code + "/" + torrentHash);
-                console.log('Preloaded torrent successfully:', torrentHash);
             } catch (error) {
                 this.showTorrents = true;
                 console.error('Error selecting torrent:', error);
@@ -552,6 +555,10 @@ export default {
     color: white;
     font-size: 1.5em;
     z-index: 10;
+}
+
+.play-button {
+    cursor: pointer;
 }
 
 .loading .spinner {
