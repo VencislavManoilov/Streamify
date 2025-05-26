@@ -7,6 +7,61 @@ class TorrentManager {
         this.timeForCleanup = 30 * 60 * 1000; // 30 minutes - pretty generous for cleanup
     }
 
+    async preloadTorrent(torrentUrl, torrentHash) {
+        try {
+            // Check if we already have this torrent loaded
+            if (this.activeTorrents.has(torrentHash)) {
+                const torrentEntry = this.activeTorrents.get(torrentHash);
+                logger.info(`Torrent ${torrentHash} is already loaded with ${torrentEntry.refCount} references`);
+                return { 
+                    success: true, 
+                    message: 'Torrent already loaded',
+                    stats: {
+                        progress: torrentEntry.torrent.progress,
+                        downloadSpeed: torrentEntry.torrent.downloadSpeed,
+                        peers: torrentEntry.torrent.numPeers
+                    }
+                };
+            }
+
+            // Add the torrent without incrementing reference count
+            const torrent = await this.getTorrent(torrentUrl, torrentHash);
+            
+            // Reduce reference count back to 0 since we're just preloading
+            // but we don't want to keep a reference that would prevent cleanup
+            const torrentEntry = this.activeTorrents.get(torrentHash);
+            torrentEntry.refCount--;
+            
+            // Find the main video file to prioritize it
+            const file = torrent.files.find(file => file.name.endsWith('.mp4'));
+            if (file) {
+                file.select(); // Prioritize this file
+                
+                // Calculate initial pieces to prioritize (first 10% of the file)
+                const startPiece = Math.floor(0 / torrent.pieceLength);
+                const piecesToPreload = Math.ceil(file.length * 0.1 / torrent.pieceLength);
+                const endPiece = Math.min(startPiece + piecesToPreload, torrent.pieces.length - 1);
+                
+                // Prioritize the initial pieces
+                torrent.critical(startPiece, endPiece);
+            }
+            
+            logger.info(`Preloaded torrent ${torrentHash} successfully`);
+            return { 
+                success: true, 
+                message: 'Torrent preloaded successfully',
+                stats: {
+                    progress: torrent.progress,
+                    downloadSpeed: torrent.downloadSpeed,
+                    peers: torrent.numPeers
+                }
+            };
+        } catch (err) {
+            logger.error(`Error preloading torrent: ${err}`);
+            throw err;
+        }
+    }
+
     async getTorrent(torrentUrl, torrentHash) {
         // Check if we already have this torrent in our manager
         if (this.activeTorrents.has(torrentHash)) {

@@ -175,6 +175,47 @@ app.post("/reset-movie", (req, res, next) => {
     }
 })
 
+app.get("/preload/:imdb_code/:torrent_hash", async (req, res) => {
+    const { imdb_code, torrent_hash } = req.params;
+
+    try {
+        // Get movie details from database
+        const movie = await knex('movies').where({ imdb_code }).first();
+
+        if (!movie) {
+            return res.status(404).json({ error: "Movie not found" });
+        }
+
+        if (!movie.torrents || movie.torrents.length === 0) {
+            return res.status(404).json({ error: "Torrent not found" });
+        }
+
+        const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
+        if (!torrentMeta) {
+            return res.status(404).json({ error: "Torrent not found" });
+        }
+
+        const torrentUrl = torrentMeta.url;
+
+        // Preload the torrent
+        const result = await global.torrentManager.preloadTorrent(torrentUrl, torrent_hash);
+        
+        res.json({
+            status: "success",
+            message: "Torrent preloading initiated",
+            torrentInfo: {
+                title: movie.title,
+                imdb_code,
+                hash: torrent_hash,
+                ...result
+            }
+        });
+    } catch (err) {
+        logger.error("Preload error: " + err);
+        res.status(500).json({ error: "Failed to preload torrent: " + err.message });
+    }
+});
+
 app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;
 
