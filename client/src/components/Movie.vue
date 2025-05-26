@@ -17,8 +17,8 @@
     
             <h1 class="title">{{ movie.title }}</h1>
     
-            <div class="torrents" v-if="movie.torrents && movie.torrents.length">
-                <button :class="torrent.hash == selectedTorrent && 'selectedTorrent'" v-for="torrent in movie.torrents" :key="torrent.url" @click="selectedTorrent != true && selectTorrent(torrent.hash)">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
+            <div class="torrents" v-if="showTorrents && movie.torrents && movie.torrents.length">
+                <button :class="torrent.hash == selectedTorrent && 'selectedTorrent'" v-for="torrent in movie.torrents" :key="torrent.url" @click="selectedTorrent != true && selectTorrent(torrent.hash, false)">{{ torrent?.type }} {{ torrent?.quality }} {{ torrent?.video_codec }}</button>
             </div>
             
             <div class="video-container">
@@ -28,8 +28,9 @@
                     <track v-if="subtitlesBgSrc" :src="subtitlesBgSrc" kind="subtitles" srclang="bg" label="Bulgarian" />
                     Your browser does not support the video tag.
                 </video>
-                <div v-if="!selectedTorrent" class="overlay">Select Resolution</div>
-                <div v-if="selectedTorrent && !isVideoLoaded" class="overlay loading">
+                <div v-if="!showTorrents && selectedTorrent && !start" class="overlay" @click="startMovie">Play</div>
+                <div v-if="showTorrents && selectedTorrent && !start" class="overlay" @click="startMovie">Select Resolution</div>
+                <div v-if="selectedTorrent && start && !isVideoLoaded" class="overlay loading">
                     <div class="spinner"></div>
                 </div>
                 
@@ -113,6 +114,8 @@ export default {
         return {
             movie: null,
             selectedTorrent: null,
+            start: false,
+            showTorrents: false,
             isVideoLoaded: false,
             URL: URL,
             player: null,
@@ -130,13 +133,13 @@ export default {
     },
     computed: {
         videoSrc() {
-            return this.selectedTorrent ? `${URL}/stream/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
+            return this.start ? `${URL}/stream/${this.movie.imdb_code}/${this.selectedTorrent}` : '';
         },
         subtitlesEnSrc() {
-            return this.selectedTorrent && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=en` : '';
+            return this.start && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=en` : '';
         },
         subtitlesBgSrc() {
-            return this.selectedTorrent && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=bg` : '';
+            return this.start && this.movie ? `/subtitles/${this.movie.imdb_code}?lang=bg` : '';
         },
         isMobile() {
             return window.innerWidth < 768;
@@ -149,8 +152,12 @@ export default {
                 Authorization: localStorage.getItem('token')
             }
         })
-        .then(response => {
+        .then(async response => {
             this.movie = response.data.movie;
+            const bestTorrent = response.data.movie.torrents.find(torrent => torrent.quality == '1080p' && torrent.video_codec == 'x264') || response.data.movie.torrents.find(torrent => torrent.quality == "1080p") || response.data.movie.torrents[0];
+            
+            await this.selectTorrent(bestTorrent.hash);
+            console.log('Selected torrent succesfully:', bestTorrent.quality, bestTorrent.video_codec, bestTorrent.type, bestTorrent.hash);
         }).catch(error => {
             console.error('There was an error!', error);
         });
@@ -248,10 +255,8 @@ export default {
         }
     },
     methods: {
-        selectTorrent(torrentHash) {
-            this.selectedTorrent = torrentHash;
-            this.isVideoLoaded = false;
-            this.loadError = null;
+        startMovie() {
+            this.start = true;
             if (!this.isMobile) {
                 if (this.player) {
                     this.player.pause();
@@ -305,6 +310,25 @@ export default {
                         console.error('Error playing video:', error);
                     });
                 }
+            }
+        },
+        async selectTorrent(torrentHash, preload = true) {
+            this.selectedTorrent = torrentHash;
+            this.isVideoLoaded = false;
+            this.loadError = null;
+            this.start = false;
+
+            if(!preload) {
+                this.startMovie();
+                return;
+            }
+
+            try {
+                await axios.get(URL+"/preload/" + this.movie.imdb_code + "/" + torrentHash);
+                console.log('Preloaded torrent successfully:', torrentHash);
+            } catch (error) {
+                this.showTorrents = true;
+                console.error('Error selecting torrent:', error);
             }
         },
         searchMovies() {
