@@ -2,6 +2,7 @@ class Logger {
     constructor() {
         this.logs = [];
         this.maxLogSize = 1000; // Maximum number of logs to keep in memory
+        this.subscribers = new Set(); // Store WebSocket subscribers
     }
 
     /**
@@ -28,7 +29,46 @@ class Logger {
         // Also log to console
         console[level](message);
         
+        // Notify all subscribers about the new log
+        this.notifySubscribers(logEntry);
+        
         return logEntry;
+    }
+
+    /**
+     * Notify all subscribers about new logs
+     * @param {Object} logEntry - The new log entry
+     */
+    notifySubscribers(logEntry) {
+        this.subscribers.forEach(socket => {
+            if (socket.readyState === 1) { // Check if socket is open
+                socket.send(JSON.stringify({
+                    type: 'newLog',
+                    log: logEntry
+                }));
+            }
+        });
+    }
+
+    /**
+     * Subscribe a WebSocket to log updates
+     * @param {WebSocket} socket - The WebSocket connection
+     */
+    subscribe(socket) {
+        this.subscribers.add(socket);
+        
+        // Remove socket when it closes
+        socket.on('close', () => {
+            this.unsubscribe(socket);
+        });
+    }
+
+    /**
+     * Unsubscribe a WebSocket from log updates
+     * @param {WebSocket} socket - The WebSocket connection
+     */
+    unsubscribe(socket) {
+        this.subscribers.delete(socket);
     }
 
     /**
@@ -86,7 +126,7 @@ class Logger {
      * @returns {Array} Recent log entries
      */
     getRecentLogs(count = 10) {
-        return this.logs.slice(0, count);
+        return this.logs.slice(-count);
     }
 
     /**

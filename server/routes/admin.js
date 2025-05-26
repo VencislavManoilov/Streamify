@@ -342,4 +342,87 @@ router.get("/logs", Authorization, async (req, res) => {
     }
 });
 
+router.ws = function(app) {
+    // Access the WebSocket server from the main app
+    const wss = app.wss;
+    
+    // Handle WebSocket connections for logs
+    wss.on('connection', (ws, req) => {
+        // Check URL path to see if this is a logs request
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        
+        if (url.pathname === '/admin/logs-ws') {
+            // Extract the auth token from query parameters
+            const token = url.searchParams.get('token');
+            
+            // Verify the token asynchronously
+            jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+                if (err) {
+                    ws.send(JSON.stringify({ 
+                        type: 'error', 
+                        message: 'Unauthorized' 
+                    }));
+                    return ws.close();
+                }
+                
+                try {
+                    // Verify the user is an admin
+                    const user = await app.locals.knex('users')
+                        .where({ email: decoded.email })
+                        .first();
+                    
+                    if (!user || user.role !== 'admin') {
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            message: 'Unauthorized' 
+                        }));
+                        return ws.close();
+                    }
+                    
+                    // Handle filter params if provided
+                    const level = url.searchParams.get('level');
+                    const count = url.searchParams.get('count');
+                    
+                    // Send initial logs based on filters
+                    let initialLogs;
+                    if (level) {
+                        initialLogs = logger.getLogsByLevel(level);
+                    } else if (count) {
+                        initialLogs = logger.getRecentLogs(parseInt(count));
+                    } else {
+                        initialLogs = logger.getLogs();
+                    }
+                    
+                    // Send initial logs
+                    ws.send(JSON.stringify({
+                        type: 'initialLogs',
+                        logs: initialLogs
+                    }));
+                    
+                    // Subscribe this socket to new logs
+                    logger.subscribe(ws);
+                    
+                    // Handle WebSocket messages (not required for this implementation)
+                    ws.on('message', (message) => {
+                        try {
+                            const data = JSON.parse(message);
+                            // Handle client messages if needed
+                        } catch (e) {
+                            // Invalid message format
+                        }
+                    });
+                    
+                } catch (err) {
+                    logger.error("WebSocket error: " + err);
+                    ws.send(JSON.stringify({ 
+                        type: 'error', 
+                        message: 'Server error' 
+                    }));
+                    ws.close();
+                }
+            });
+        }
+    });
+};
+
 module.exports = router;
