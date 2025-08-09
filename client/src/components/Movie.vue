@@ -172,7 +172,6 @@ export default {
             
             switch(e.code) {
                 case 'Space':
-                    e.preventDefault();
                     this.player.togglePlay(this.player.playing);
                     break;
                 case 'ArrowLeft':
@@ -333,7 +332,7 @@ export default {
             }
         },
         searchMovies() {
-            if (this.searchQuery.trim() !== '') {
+            if (!this.searchQuery.trim()) {
                 this.$router.push({ path: '/search', query: { query: this.searchQuery } });
             }
         },
