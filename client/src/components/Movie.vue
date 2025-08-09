@@ -177,11 +177,9 @@ export default {
                     break;
                 case 'ArrowLeft':
                     e.preventDefault();
-                    this.player.rewind(10);
                     break;
                 case 'ArrowRight':
                     e.preventDefault();
-                    this.player.forward(10);
                     break;
                 case 'ArrowUp': {
                     e.preventDefault();
