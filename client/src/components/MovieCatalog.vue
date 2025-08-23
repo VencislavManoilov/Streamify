@@ -2,7 +2,7 @@
     <div class="home">
         <!-- Search input and button -->
         <div class="search-bar">
-            <input v-model="searchQuery" type="text" placeholder="Search for movies..." @keyup.enter="searchMovies" />
+            <input v-model="searchQuery" type="text" ref="searchInput" placeholder="Search for movies..." @keyup.enter="searchMovies" />
             <button @click="searchMovies">Search</button>
         </div>
         <div class="category" v-for="category in categories" :key="category.name">
@@ -35,6 +35,14 @@ export default {
         MovieList
     },
     async mounted() {
+        this.keyHandler = (e) => {
+          if (e.key === '/' && document.activeElement !== this.$refs.searchInput) {
+            e.preventDefault();
+            this.$refs.searchInput.focus();
+          }
+        };
+        window.addEventListener('keydown', this.keyHandler);
+
         await axios.get(URL+"/categories", {
             headers: {
                 Authorization: localStorage.getItem('token')
@@ -45,6 +53,9 @@ export default {
         }).catch(error => {
             console.error('There was an error!', error);
         });
+    },
+    beforeUnmount() {
+        window.removeEventListener('keydown', this.keyHandler);
     },
     methods: {
         searchMovies() {
