@@ -191,7 +191,7 @@ app.post("/reset-movie", (req, res, next) => {
     }
 
     try {
-        const data = await axios.get("https://yts.mx/api/v2/movie_details.json?imdb_id=" + imdb_code);
+        const data = await axios.get("https://yts.lt/api/v2/movie_details.json?imdb_id=" + imdb_code);
         movie = data.data.data.movie;
         if(movie) {
             await uploadMovie(movie, "yts");
@@ -681,7 +681,7 @@ app.get("/search", (req, res, next) => {
         }
 
         response.data.Search.forEach(async (search) => {
-            const data = await axios.get("https://yts.mx/api/v2/movie_details.json?imdb_id=" + search.imdbID);
+            const data = await axios.get("https://yts.lt/api/v2/movie_details.json?imdb_id=" + search.imdbID);
             movie = data.data.data.movie;
             await uploadMovie(movie, "yts");
         });
@@ -766,7 +766,7 @@ const fetchTrendingMovies = async () => {
         for (const movie of category.movies) {
             if (movie.original_title) {
                 try {
-                    const data = await axios.get(`https://yts.mx/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
+                    const data = await axios.get(`https://yts.lt/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
                     const ytsMovie = data.data.data.movies[0];
                     if (ytsMovie) {
                         ytsMovie.overview = movie.overview;
