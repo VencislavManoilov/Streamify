@@ -17,8 +17,8 @@ const schemaDefinition = {
     title: { type: 'string', notNullable: true },
     genres: { type: 'json', notNullable: true },
     year: { type: 'integer', notNullable: true },
-    rating: { type: 'float', notNullable: true },
-    runtime: { type: 'integer', notNullable: true },
+    rating: { type: 'float', notNullable: true, defaultTo: 0 },
+    runtime: { type: 'integer', notNullable: false },
     summary: { type: 'text', notNullable: true },
     background_image: { type: 'text', notNullable: true },
     small_cover_image: { type: 'text', notNullable: true },
@@ -53,7 +53,7 @@ async function ensureSchema() {
           if (columnProps.primary) column.primary();
           if (columnProps.notNullable) column.notNullable();
           if (columnProps.unique) column.unique();
-          if (columnProps.defaultTo) column.defaultTo(columnProps.defaultTo);
+          if (columnProps.defaultTo !== undefined) column.defaultTo(columnProps.defaultTo);
         }
       });
     } else {
@@ -74,7 +74,7 @@ async function ensureSchema() {
             if (columnProps.primary) column.primary();
             if (columnProps.notNullable) column.notNullable();
             if (columnProps.unique) column.unique();
-            if (columnProps.defaultTo) column.defaultTo(columnProps.defaultTo);
+            if (columnProps.defaultTo !== undefined) column.defaultTo(columnProps.defaultTo);
           });
         }
       }
