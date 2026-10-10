@@ -19,8 +19,10 @@
 
 <script>
 import axios from 'axios';
+import { API_URL } from '../config';
+import { session } from '../session';
 
-const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
+const URL = API_URL;
 
 export default {
     name: 'RegisterPage',
@@ -42,7 +44,7 @@ export default {
 
             this.email = response.data.email;
         } catch(error) {
-            this.error = error.response.data.message || error.response.data || 'An error occurred';
+            this.error = (error.response && (error.response.data.message || error.response.data)) || 'An error occurred';
         }
     },
     methods: {
@@ -59,10 +61,10 @@ export default {
                     return;
                 }
 
-                localStorage.setItem('token', response.data.token);
+                await session.login(response.data.token);
                 this.$router.push('/');
             } catch (error) {
-                this.error = error.response.data.message || error.response.data || 'An error occurred';
+                this.error = (error.response && (error.response.data.message || error.response.data)) || 'An error occurred';
             }
         }
     }

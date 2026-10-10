@@ -21,9 +21,9 @@ class Logger {
         
         this.logs.push(logEntry);
         
-        // Trim logs if they exceed max size
+        // Trim logs if they exceed max size (keep the newest ones)
         if (this.logs.length > this.maxLogSize) {
-            this.logs = this.logs.slice(0, this.maxLogSize);
+            this.logs = this.logs.slice(-this.maxLogSize);
         }
         
         // Also log to console

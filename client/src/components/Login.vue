@@ -5,16 +5,16 @@
                 <h2>Login</h2>
                 <div class="form-group">
                     <label for="email">Email</label>
-                    <input type="email" id="email" v-model="email" required />
+                    <input type="email" id="email" v-model="email" autocomplete="email" required />
                 </div>
                 <div class="form-group">
                     <label for="password">Password</label>
-                    <input type="password" id="password" v-model="password" required />
+                    <input type="password" id="password" v-model="password" autocomplete="current-password" required />
                 </div>
                 <div class="error">
                     <p v-if="error" class="error-message">{{ error }}</p>
                 </div>
-                <button type="submit">Login</button>
+                <button type="submit" :disabled="submitting">Login</button>
             </form>
         </div>
     </div>
@@ -22,36 +22,39 @@
 
 <script>
 import axios from 'axios';
-
-const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
+import { API_URL } from '../config';
+import { session, safeRedirect } from '../session';
 
 export default {
     name: "LoginPage",
+    emits: ['close'],
     data() {
         return {
             email: '',
             password: '',
-            styles: {
-                container: 'container',
-                form: 'form',
-                formGroup: 'formGroup'
-            },
-            error: ''
+            error: '',
+            submitting: false
         };
     },
     methods: {
         async handleLogin() {
+            this.submitting = true;
+            this.error = '';
             try {
-                const response = await axios.post(URL+'/auth/login', {
+                const response = await axios.post(API_URL + '/auth/login', {
                     email: this.email,
                     password: this.password
-                })
+                });
 
-                localStorage.setItem('token', response.data.token);
-                window.location.reload();
+                await session.login(response.data.token);
+                // Back to the page that asked for the login
+                this.$router.replace(safeRedirect(this.$route.query.redirect));
             } catch (err) {
                 console.error('There was an error!', err);
-                this.error = err.response.data.message || err.response.data || 'An error occurred. Please try again.';
+                const data = err.response && err.response.data;
+                this.error = (data && (data.message || data)) || 'The server could not be reached. Please try again.';
+            } finally {
+                this.submitting = false;
             }
         }
     }
@@ -69,27 +72,30 @@ export default {
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(3px);
+    background-color: rgba(3, 4, 9, 0.6);
+    backdrop-filter: blur(6px);
 }
 
 .container > div {
-    background-color: black;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     width: 400px;
-    max-width: 80%; 
+    max-width: calc(100% - 32px);
 }
 
 .register {
     max-width: 100%;
     margin: 0 auto;
-    padding: 20px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    padding: 28px;
+    box-sizing: border-box;
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }
 
 .register h2 {
+    margin-top: 0;
     text-align: center;
+    font-stretch: 112%;
 }
 
 .register div {
@@ -98,42 +104,58 @@ export default {
 
 .register label {
     display: block;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
+    color: var(--text-muted);
 }
 
 .register input {
     width: 100%;
-    padding: 8px;
+    height: 44px;
+    padding: 0 12px;
     box-sizing: border-box;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.register input:focus {
+    outline: none;
+    border-color: rgba(233, 195, 123, 0.6);
+    box-shadow: 0 0 0 3px rgba(233, 195, 123, 0.14);
 }
 
 .register button {
     width: 100%;
-    padding: 10px;
-    background-color: #007bff;
-    color: white;
+    height: 46px;
+    background-color: #f2f2f4;
+    color: #0b0b10;
     border: none;
-    border-radius: 4px;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
     cursor: pointer;
 }
 
 .register button:hover {
-    background-color: #0056b3;
+    background-color: #ffffff;
+}
+
+.register button:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 @media (max-width: 550px) {
-    .container > div {
-        min-width: 100%;
-    }
-
     .register h2 {
-        font-size: 36px;
+        font-size: 30px;
     }
 
     .register label {
-        font-size: 24px;
+        font-size: 18px;
     }
-    
+
     .register input {
         font-size: 18px;
     }
@@ -145,6 +167,10 @@ export default {
 }
 
 .error {
-    color: red;
+    color: var(--danger);
+}
+
+.error-message {
+    margin: 0;
 }
 </style>

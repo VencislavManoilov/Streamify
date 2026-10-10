@@ -1,0 +1,153 @@
+<template>
+    <header class="app-header">
+        <button v-if="back" class="back-button" type="button" aria-label="Back" @click="goBack">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19 12H5M11 5l-7 7 7 7" />
+            </svg>
+        </button>
+        <SearchBar v-if="search" class="header-search" />
+        <div class="header-end">
+            <router-link v-if="adminLink && isAdmin" to="/admin" class="admin-link">Admin</router-link>
+            <router-link
+                to="/profile"
+                class="profile-button"
+                :class="{ current: $route.name === 'Profile' }"
+                :aria-label="`Your profile (${username})`"
+                :title="username"
+            >
+                <ProfileAvatar :name="username" :size="40" />
+            </router-link>
+        </div>
+    </header>
+</template>
+
+<script>
+import SearchBar from './SearchBar.vue';
+import ProfileAvatar from './ProfileAvatar.vue';
+import { session } from '../session';
+
+export default {
+    name: 'AppHeader',
+    components: {
+        SearchBar,
+        ProfileAvatar
+    },
+    props: {
+        back: {
+            type: Boolean,
+            default: false
+        },
+        search: {
+            type: Boolean,
+            default: false
+        },
+        adminLink: {
+            type: Boolean,
+            default: false
+        }
+    },
+    computed: {
+        username() {
+            return session.user ? session.user.username : '';
+        },
+        isAdmin() {
+            return session.isAdmin;
+        }
+    },
+    methods: {
+        goBack() {
+            // Go back if the previous page is part of this site, otherwise go to the home page
+            if (window.history.state && window.history.state.back) {
+                this.$router.back();
+            } else {
+                this.$router.push('/');
+            }
+        }
+    }
+};
+</script>
+
+<style scoped>
+.app-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px var(--gutter);
+}
+
+.header-search {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.header-end {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex: none;
+    margin-left: auto;
+}
+
+.back-button {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.back-button:hover {
+    background: var(--surface-hover);
+}
+
+.back-button:active {
+    transform: scale(0.94);
+}
+
+.back-button svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.admin-link {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    transition: color 0.2s ease;
+}
+
+.admin-link:hover {
+    color: var(--text);
+}
+
+.profile-button {
+    display: block;
+    border-radius: 50%;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.profile-button:hover,
+.profile-button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px rgba(255, 255, 255, 0.85);
+}
+
+.profile-button.current {
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+}
+
+.profile-button:active {
+    transform: scale(0.95);
+}
+</style>

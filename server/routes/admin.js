@@ -1,24 +1,11 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
+const transporter = require('../utils/mailer');
+const { signSessionToken } = require('../middleware/Auth');
 
 const router = express.Router();
-
-// Updated transporter configuration for SendGrid SMTP
-const transporter = nodemailer.createTransport({
-    host: process.env.MAIL_HOST,
-    port: process.env.MAIL_PORT,
-    secure: process.env.MAIL_SECURE, // true - for 465, false - for other ports
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-    },
-    tls: {
-        rejectUnauthorized: process.env.MAIL_TLS_REJECT_UNAUTHORIZED,
-    },
-});
 
 const Authorization = async (req, res, next) => {
     const token = req.headers.authorization;
@@ -58,7 +45,7 @@ router.get('/status', async (req, res) => {
 });
 
 router.post('/register', async (req, res) => {
-    const users = req.knex('users').select("*");
+    const users = await req.knex('users').select("id").limit(1);
     if(users && users.length > 0) {
         return res.status(400).send('Admin account already exists');
     }
@@ -80,7 +67,7 @@ router.post('/register', async (req, res) => {
     const user = { username, email, password: hashedPassword, role: 'admin' };
     
     try {
-        const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        const token = signSessionToken(user.email);
         await req.knex('users').insert(user);
         res.status(200).json({ token });
     } catch(err) {
@@ -90,20 +77,20 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
-    await req.knex('users').where({ email }).first().then(user => {
-        if (user && bcrypt.compare(password, user.password)) {
-            if(user.role !== 'admin') {
-                return res.status(401).json({ message: 'You have to be admin for god sake!' });
-            }
-
-            const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
-            res.json({ token });
-        } else {
-            res.status(401).send('Invalid credentials');
+    try {
+        const user = await req.knex('users').where({ email }).first();
+        if (!user || !password || !(await bcrypt.compare(password, user.password))) {
+            return res.status(401).send('Invalid credentials');
         }
-    }).catch(err => {
+
+        if(user.role !== 'admin') {
+            return res.status(401).json({ message: 'You have to be admin for god sake!' });
+        }
+
+        res.json({ token: signSessionToken(user.email) });
+    } catch(err) {
         res.status(500).send('Internal Server Error');
-    })
+    }
 });
 
 router.get('/users', Authorization, async (req, res) => {
@@ -209,8 +196,8 @@ router.post('/invite', Authorization, async (req, res) => {
         return res.status(400).json({ message: 'Invalid email' });
     }
 
-    const user = req.knex('users').where({ email }).first();
-    if(user.length > 0) {
+    const user = await req.knex('users').where({ email }).first();
+    if(user) {
         return res.status(400).json({ message: 'User already exists' });
     }
 
@@ -279,7 +266,8 @@ router.post("/request-access", async (req, res) => {
 
     const adminUser = await req.knex('users').where({ role: 'admin' }).first();
     if (!adminUser) {
-        return logger.warn("No admin user found. Please create an admin account.");
+        logger.warn("No admin user found. Please create an admin account.");
+        return res.status(503).json({ message: 'Requests are not accepted yet. Please try again later.' });
     }
 
     // Send email using nodemailer

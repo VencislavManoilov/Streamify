@@ -10,9 +10,7 @@
                 <div class="message" :class="{ 'error': error, 'success': success }">
                     <p v-if="error || success">{{ message }}</p>
                 </div>
-                <div v-if="loading" class="loading-container">
-                    <div class="loading-spinner"></div>
-                </div>
+                <LoadingSpinner v-if="loading" :size="36" label="Sending your request" />
                 <button v-if="!loading && !success" type="submit">Submit Request</button>
             </form>
         </div>
@@ -21,11 +19,15 @@
 
 <script>
 import axios from 'axios';
-
-const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
+import { API_URL } from '../config';
+import LoadingSpinner from './LoadingSpinner.vue';
 
 export default {
     name: "RequestAccess",
+    components: {
+        LoadingSpinner
+    },
+    emits: ['close'],
     data() {
         return {
             email: '',
@@ -43,7 +45,7 @@ export default {
             this.message = '';
             
             try {
-                const response = await axios.post(URL + '/admin/request-access', {
+                const response = await axios.post(API_URL + '/admin/request-access', {
                     email: this.email
                 });
                 
@@ -71,27 +73,30 @@ export default {
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(3px);
+    background-color: rgba(3, 4, 9, 0.6);
+    backdrop-filter: blur(6px);
 }
 
 .container > div {
-    background-color: black;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     width: 400px;
-    max-width: 80%; 
+    max-width: calc(100% - 32px);
 }
 
 .register {
     max-width: 100%;
     margin: 0 auto;
-    padding: 20px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    padding: 28px;
+    box-sizing: border-box;
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }
 
 .register h2 {
+    margin-top: 0;
     text-align: center;
+    font-stretch: 112%;
 }
 
 .register div {
@@ -100,27 +105,42 @@ export default {
 
 .register label {
     display: block;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
+    color: var(--text-muted);
 }
 
 .register input {
     width: 100%;
-    padding: 8px;
+    height: 44px;
+    padding: 0 12px;
     box-sizing: border-box;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+    font-size: 1rem;
+}
+
+.register input:focus {
+    outline: none;
+    border-color: rgba(233, 195, 123, 0.6);
+    box-shadow: 0 0 0 3px rgba(233, 195, 123, 0.14);
 }
 
 .register button {
     width: 100%;
-    padding: 10px;
-    background-color: #007bff;
-    color: white;
+    height: 46px;
+    background-color: #f2f2f4;
+    color: #0b0b10;
     border: none;
-    border-radius: 4px;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
     cursor: pointer;
 }
 
 .register button:hover {
-    background-color: #0056b3;
+    background-color: #ffffff;
 }
 
 .message {
@@ -128,45 +148,25 @@ export default {
     padding: 5px;
 }
 
+.message p {
+    margin: 0;
+}
+
 .error {
-    color: red;
+    color: var(--danger);
 }
 
 .success {
-    color: green;
-}
-
-.loading-container {
-    display: flex;
-    justify-content: center;
-    padding: 10px 0;
-}
-
-.loading-spinner {
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #007bff;
-    border-radius: 50%;
-    width: 30px;
-    height: 30px;
-    animation: spin 2s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    color: #7fd18b;
 }
 
 @media (max-width: 550px) {
-    .container > div {
-        min-width: 100%;
-    }
-
     .register h2 {
-        font-size: 36px;
+        font-size: 30px;
     }
 
     .register label {
-        font-size: 24px;
+        font-size: 18px;
     }
     
     .register input {

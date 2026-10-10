@@ -1,40 +1,100 @@
 <template>
-    <div class="container" @click.self="$emit('close')">
-        <div class="movie-details">
-            <button class="closeButton" v-on:click="$emit('close')">
-                <svg class="closeSvg" viewBox="0 0 122.878 122.88" enable-background="new 0 0 122.878 122.88"><g><path d="M1.426,8.313c-1.901-1.901-1.901-4.984,0-6.886c1.901-1.902,4.984-1.902,6.886,0l53.127,53.127l53.127-53.127 c1.901-1.902,4.984-1.902,6.887,0c1.901,1.901,1.901,4.985,0,6.886L68.324,61.439l53.128,53.128c1.901,1.901,1.901,4.984,0,6.886 c-1.902,1.902-4.985,1.902-6.887,0L61.438,68.326L8.312,121.453c-1.901,1.902-4.984,1.902-6.886,0 c-1.901-1.901-1.901-4.984,0-6.886l53.127-53.128L1.426,8.313L1.426,8.313z"/></g></svg>
+    <div class="container" @click.self="close">
+        <article class="movie-details" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1" ref="card">
+            <button class="closeButton" ref="closeButton" type="button" aria-label="Close" @click="close">
+                <svg class="closeSvg" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
             </button>
-            <div class="background-image" :style="{ backgroundImage: 'url(' + backgroundImage + ')' }"></div>
-            <img :src="cover" alt="Movie Cover" class="cover" />
-            <div class="content">
-                <h1 class="title">{{ title }}</h1>
-                <button class="play-button">
-                    <router-link :to="'/movie/' + imdb_code" class="close">
-                        <div>
-                            <img width="26" height="26" src="https://img.icons8.com/metro/26/play.png" alt="play"/>
-                            <span>Play</span>
+
+            <div class="scroll">
+                <div class="hero" :style="{ backgroundImage: movie.background_image ? `url(${movie.background_image})` : 'none' }">
+                    <h1 class="title" :id="titleId">{{ movie.title }}</h1>
+                </div>
+
+                <div class="content">
+                    <div class="intro">
+                        <div class="actions">
+                            <router-link :to="'/movie/' + movie.imdb_code" class="play-button">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" /></svg>
+                                <span>Play</span>
+                            </router-link>
+                            <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" rel="noopener noreferrer" class="imdb-button" aria-label="Open on IMDb">
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDb">
+                            </a>
                         </div>
-                    </router-link>
-                </button>
-                <p class="rating"><img width="24" height="24" src="https://img.icons8.com/fluency/24/star--v1.png" alt="star--v1"/> {{ rating }} / 10</p>
-                <p class="year">Year: {{ year }}</p>
-                <p class="genres">Genres: {{ genres.join(', ') }}</p>
+
+                        <p class="facts">
+                            <span class="rating">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" /></svg>
+                                {{ movie.rating }} / 10
+                            </span>
+                            <span v-if="movie.year">{{ movie.year }}</span>
+                            <span v-if="runtime">{{ runtime }}</span>
+                        </p>
+                        <p v-if="genres" class="genres">{{ genres }}</p>
+                    </div>
+
+                    <img :src="movie.medium_cover_image" alt="" class="cover" />
+
+                    <p class="summary">{{ movie.summary || 'No description available.' }}</p>
+                </div>
             </div>
-        </div>
+        </article>
     </div>
 </template>
 
 <script>
+let instances = 0;
+
 export default {
     name: 'MovieDetails',
     props: {
-        backgroundImage: String,
-        cover: String,
-        title: String,
-        rating: Number,
-        year: Number,
-        genres: Array,
-        imdb_code: String
+        movie: {
+            type: Object,
+            required: true
+        }
+    },
+    emits: ['close'],
+    data() {
+        instances += 1;
+        return {
+            titleId: `movie-details-title-${instances}`
+        };
+    },
+    computed: {
+        runtime() {
+            const minutes = Number(this.movie.runtime);
+            if (!minutes) return '';
+            const hours = Math.floor(minutes / 60);
+            return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+        },
+        genres() {
+            return (this.movie.genres || []).join(', ');
+        }
+    },
+    mounted() {
+        // Keep the page behind the card from scrolling
+        this.previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        this.previousFocus = document.activeElement;
+        this.$refs.closeButton.focus({ preventScroll: true });
+
+        this.keyHandler = (e) => {
+            if (e.key === 'Escape') this.close();
+        };
+        window.addEventListener('keydown', this.keyHandler);
+    },
+    beforeUnmount() {
+        document.body.style.overflow = this.previousOverflow;
+        window.removeEventListener('keydown', this.keyHandler);
+        if (this.previousFocus && this.previousFocus.focus) {
+            this.previousFocus.focus({ preventScroll: true });
+        }
+    },
+    methods: {
+        close() {
+            this.$emit('close');
+        }
     }
 }
 </script>
@@ -42,153 +102,282 @@ export default {
 <style scoped>
 .container {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    align-content: center;
-    background-color: rgba(0, 0, 0, 0.5);
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background-color: rgba(3, 4, 9, 0.66);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
     z-index: 1000;
 }
 
 .movie-details {
+    position: relative;
     display: flex;
     flex-direction: column;
-    text-align: center;
-    color: white;
-    width: 800px;
-    min-height: 600px;
-    margin: auto;
-    background: rgb(34, 34, 34);
-    border-radius: 24px;
-    overflow: hidden;
-}
-
-.background-image {
     width: 100%;
-    height: 250px;
-    background-size: cover;
+    max-width: 800px;
+    max-height: min(780px, calc(100dvh - 48px));
+    color: var(--text);
+    background: var(--bg-elevated);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+    outline: none;
+    animation: card-in 0.22s ease-out;
 }
 
-.cover {
+/* Everything below the close button scrolls, so nothing ever spills out of the card */
+.scroll {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.hero {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    min-height: 260px;
+    padding: 64px 24px 24px;
+    box-sizing: border-box;
+    background-color: #0b0c15;
+    background-size: cover;
+    background-position: center 30%;
+}
+
+/* Keeps the title readable on bright backdrops and blends the image into the card */
+.hero::after {
+    content: '';
     position: absolute;
-    align-self: flex-end;
-    width: 200px;
-    height: auto;
-    transform: translateY(20%);
-    margin-right: 24px;
-    border-radius: 10px;
+    inset: 0;
+    background: linear-gradient(to top, var(--bg-elevated) 0%, rgba(16, 18, 29, 0.55) 45%, rgba(16, 18, 29, 0) 75%);
+}
+
+.title {
+    position: relative;
+    z-index: 1;
+    margin: 0;
+    padding-right: 204px;
+    font-size: clamp(1.9rem, 4.2vw, 2.8rem);
+    font-weight: 800;
+    font-stretch: 115%;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+    text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
 }
 
 .content {
-    /* max-width: 600px; */
-    width: 100%;
-    text-align: left;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 24px;
+    padding: 0 24px 28px;
+}
+
+.intro {
+    grid-column: 1;
+    grid-row: 1;
+    padding-top: 4px;
+}
+
+.cover {
+    position: relative;
+    z-index: 1;
+    grid-column: 2;
+    grid-row: 1;
+    width: 180px;
+    aspect-ratio: 2 / 3;
+    margin-top: -170px;
+    object-fit: cover;
+    border-radius: 10px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
 }
 
 .closeButton {
     position: absolute;
-    width: 48px;
-    height: 48px;
-    margin: 12px;
-    border-radius: 24px;
-    border: none;
-    background-color: rgba(0, 0, 0, 0.363);
-    align-content: center;
+    top: 12px;
+    left: 12px;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background-color: rgba(8, 9, 16, 0.55);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    color: var(--text);
     cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.closeButton:hover {
+    background-color: rgba(255, 255, 255, 0.18);
 }
 
 .closeSvg {
     width: 20px;
     height: 20px;
-    margin: auto;
-    align-self: center;
-    margin-top: 3px;
-    fill: rgb(238, 238, 238);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
 }
 
-.title {
-    position: absolute;
-    transform: translateY(-110%);
-    font-size: 3rem;
-    margin: 0;
-    margin-left: 24px;
-    max-width: 550px;
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 0 20px;
 }
 
 .play-button {
-    margin: 24px 36px;
-    font-size: 1.5rem;
-    color: black;
-    background-color: rgb(233, 233, 233);
-    border: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 26px 0 20px;
     border-radius: 12px;
-    cursor: pointer;
+    background-color: #f2f2f4;
+    color: #0b0b10;
+    font-size: 1.1rem;
+    font-weight: 700;
+    transition: background-color 0.2s ease, transform 0.2s ease;
 }
 
-.play-button div {
-    margin: 6px 12px;
+.play-button:hover {
+    background-color: #ffffff;
+}
+
+.play-button:active {
+    transform: scale(0.97);
+}
+
+.play-button svg {
+    width: 24px;
+    height: 24px;
+    fill: currentColor;
+}
+
+.imdb-button {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 6px;
+    height: 48px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border-radius: 12px;
+    background-color: #f5c518;
+    transition: filter 0.2s ease;
 }
 
-.play-button span {
-    font-size: 1.2rem;
-    color: black;
-    text-decoration: none;
+.imdb-button:hover {
+    filter: brightness(0.9);
 }
 
-.rating, .year, .genres {
-    margin: 0 24px;
+.imdb-button img {
+    height: 24px;
+    width: auto;
+}
+
+.facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 18px;
+    margin: 0 0 8px;
+    color: var(--text-muted);
+    font-size: 1.05rem;
 }
 
 .rating {
-    display: flex;
-    flex-direction: row;
-    width: fit-content;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 1.3rem;
-    margin-top: 0;
-    margin-bottom: 24px;
+    color: var(--text);
+    font-weight: 600;
 }
 
-.year, .genres {
-    font-size: 1.2rem;
-    margin-bottom: 6px;
+.rating svg {
+    width: 20px;
+    height: 20px;
+    fill: var(--accent);
 }
 
-@media (max-width: 800px) {
+.genres {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 1.05rem;
+}
+
+.summary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    max-width: 68ch;
+    margin: 20px 0 0;
+    color: #cdd0dc;
+    font-size: 1.02rem;
+    line-height: 1.65;
+}
+
+@keyframes card-in {
+    from {
+        opacity: 0;
+        transform: translateY(14px) scale(0.985);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
     .movie-details {
-        width: 100%;
-        height: 100%;
-        border-radius: 0;
+        animation: none;
+    }
+}
+
+@media (max-width: 640px) {
+    .container {
+        padding: 0;
     }
 
-    .cover {
-        width: 150px;
-        transform: translateY(50%);
-        /* align-self: flex-start; */
+    .movie-details {
+        max-height: 100dvh;
+        height: 100%;
+        border-radius: 0;
+        border: none;
+    }
+
+    .hero {
+        min-height: 220px;
+        padding: 72px 16px 16px;
     }
 
     .title {
-        position: static;
-        transform: none;
-        margin: 24px;
-        margin-top: 92px;
+        padding-right: 0;
+        font-size: 1.8rem;
+    }
+
+    .content {
+        column-gap: 16px;
+        padding: 0 16px 24px;
+    }
+
+    .cover {
+        width: 104px;
+        margin-top: 0;
+        align-self: start;
+    }
+
+    .actions {
+        flex-wrap: wrap;
     }
 
     .play-button {
-        margin-left: 24px;
-        margin-top: 0;
-        width: calc(100% - 48px);
-        height: 48px;
-    }
-    
-    .play-button span {
-        font-size: 1.5rem;
+        flex: 1;
+        justify-content: center;
     }
 }
 </style>

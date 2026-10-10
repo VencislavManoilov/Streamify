@@ -1,6 +1,12 @@
+const dotenv = require('dotenv');
+dotenv.config();
+
+// Some of the DHT bootstrap servers resolve to IPv6 first, which the IPv4-only DHT socket can't reach.
+// Without this the DHT never finds any nodes and torrents can only get peers from trackers.
+require('dns').setDefaultResultOrder('ipv4first');
+
 const express = require('express');
 const app = express();
-const dotenv = require('dotenv');
 const ensureSchema = require('./schema');
 const knex = require('./knex');
 const { default: axios } = require('axios');
@@ -8,15 +14,24 @@ const cors = require('cors');
 const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
+const yts = require('./utils/yts');
+const transporter = require('./utils/mailer');
 const srtToVtt = require('srt-to-vtt');
 const logger = require('./utils/logger');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { Readable } = require('stream');
 
 const PORT = 8080;
 
 const http = require('http');
 const WebSocket = require('ws');
+
+// A stray rejected promise gets logged instead of taking the whole server down
+process.on('unhandledRejection', (reason) => {
+    logger.error(`Unhandled promise rejection: ${reason && reason.stack ? reason.stack : reason}`);
+});
 
 // Create HTTP server from your Express app
 const server = http.createServer(app);
@@ -60,61 +75,92 @@ app.use(cors({
     },
 }));
 
-dotenv.config();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-let torrentClient;
 
 const OMDB_API_KEY = process.env.OMDB_API_KEY;
 const OMDB_URL = "https://www.omdbapi.com/";
 
+const tmdb = axios.create({
+    baseURL: "https://api.themoviedb.org/3",
+    timeout: 15000,
+    params: { api_key: process.env.TMDB_API_KEY }
+});
+
+// Streams that haven't sent anything for this long are closed (see pipeTorrentFile)
+const STREAM_STALL_TIMEOUT = (Number(process.env.STREAM_STALL_SECONDS) || 5 * 60) * 1000;
+const SUBTITLE_CACHE_DIR = path.join(__dirname, 'subtitle_cache');
+const IMDB_CODE = /^tt\d+$/;
+
 let categories = [];
 
+const withKnex = (req, res, next) => {
+    req.knex = knex;
+    next();
+};
+
+// Runs `fn` for every item with at most `limit` calls in flight. `fn` must not throw.
+async function mapLimit(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await fn(items[index], index);
+        }
+    });
+    await Promise.all(workers);
+    return results;
+}
+
 async function uploadMovie(movie, type) {
-    if (!movie.id) {
+    if (!movie || !movie.id) {
         return;
     }
     try {
-        const existingMovie = await knex('movies').where({ imdb_code: movie.imdb_code }).first();
-
         if (type === "yts") {
             const newMovie = {
                 imdb_code: movie.imdb_code,
                 slug: movie.slug || movie.title.toLowerCase().replace(/\s+/g, '-'),
                 title: movie.title,
-                genres: JSON.stringify(movie.genres),
+                genres: JSON.stringify(movie.genres || []),
                 year: movie.year,
-                rating: movie.rating,
-                runtime: movie.runtime,
+                rating: movie.rating || 0,
+                runtime: movie.runtime || null,
                 summary: movie.summary || movie.description || movie.description_full || movie.description_intro || movie.overview || "No summary available",
-                background_image: movie.background_image,
-                small_cover_image: movie.small_cover_image,
-                medium_cover_image: movie.medium_cover_image,
-                large_cover_image: movie.large_cover_image,
-                torrents: JSON.stringify(movie.torrents)
+                background_image: movie.background_image || '',
+                small_cover_image: movie.small_cover_image || '',
+                medium_cover_image: movie.medium_cover_image || '',
+                large_cover_image: movie.large_cover_image || '',
+                torrents: JSON.stringify(movie.torrents || [])
             };
 
-            if(existingMovie) {
-                return knex('movies').where({ imdb_code: movie.imdb_code }).update(newMovie);
-            }
-
-            return knex('movies').insert(newMovie);
+            return await knex('movies').insert(newMovie).onConflict('imdb_code').merge();
         }
 
+        const existingMovie = await knex('movies').where({ imdb_code: movie.imdb_code }).first();
         if(existingMovie) {
-            return knex('movies').where({ imdb_code: movie.imdb_code }).update(movie);
+            return await knex('movies').where({ imdb_code: movie.imdb_code }).update(movie);
         }
 
-        return knex('movies').insert(movie);
+        return await knex('movies').insert(movie);
     } catch (dbError) {
         logger.error("Database insertion error: " + dbError);
         return Promise.reject(dbError);
     }
 }
 
+function findTorrent(movie, torrentHash) {
+    const wanted = String(torrentHash).toLowerCase();
+    return (movie.torrents || []).find(torrent => String(torrent.hash).toLowerCase() === wanted);
+}
+
+function torrentSource(movie, torrentMeta) {
+    return { url: torrentMeta.url, name: `${movie.title} (${torrentMeta.quality})` };
+}
+
 app.get("/", (req, res) => {
-    res.json({ 
+    res.json({
         version: '1.0.0',
         message: "Welcome to Streamify API!"
     });
@@ -131,15 +177,12 @@ app.use('/admin', async (req, res, next) => {
 adminRoute.ws(app);
 
 const authRoute = require('./routes/auth');
-app.use('/auth', async (req, res, next) => {
-    req.knex = knex;
-    next();
-}, authRoute);
+app.use('/auth', withKnex, authRoute);
 
-app.get("/movies", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, (req, res) => {
+const historyRoute = require('./routes/history');
+app.use('/history', withKnex, historyRoute);
+
+app.get("/movies", withKnex, Authorization, (req, res) => {
     knex('movies').select('*').limit(15).then(movies => {
         res.json({ movies });
     }).catch(err => {
@@ -147,10 +190,7 @@ app.get("/movies", (req, res, next) => {
     });
 });
 
-app.get("/movies/:imdb_code", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, (req, res) => {
+app.get("/movies/:imdb_code", withKnex, Authorization, (req, res) => {
     const { imdb_code } = req.params;
 
     knex('movies').where({ imdb_code }).first().then(movie => {
@@ -164,10 +204,7 @@ app.get("/movies/:imdb_code", (req, res, next) => {
     });
 });
 
-app.get("/categories", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, (req, res) => {
+app.get("/categories", withKnex, Authorization, (req, res) => {
     try {
         res.status(200).json(categories);
     } catch (err) {
@@ -175,24 +212,16 @@ app.get("/categories", (req, res, next) => {
     }
 });
 
-app.post("/reset-movie", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, async (req, res) => {
+app.post("/reset-movie", withKnex, Authorization, async (req, res) => {
     const { imdb_code } = req.body;
 
     try {
-        const movie = await knex('movies').where({ imdb_code }).first();
-        if (!movie) {
+        const existingMovie = await knex('movies').where({ imdb_code }).first();
+        if (!existingMovie) {
             return res.status(404).json({ error: "Movie not found" });
         }
-    } catch (err) {
-        res.status(500).json({ error: "Internal server error" });
-    }
 
-    try {
-        const data = await axios.get("https://yts.lt/api/v2/movie_details.json?imdb_id=" + imdb_code);
-        movie = data.data.data.movie;
+        const movie = await yts.getMovieDetails(imdb_code);
         if(movie) {
             await uploadMovie(movie, "yts");
             return res.json({ message: "Movie reset successfully", movie });
@@ -205,7 +234,7 @@ app.post("/reset-movie", (req, res, next) => {
     }
 })
 
-app.get("/preload/:imdb_code/:torrent_hash", async (req, res) => {
+app.get("/preload/:imdb_code/:torrent_hash", withKnex, Authorization, async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;
 
     try {
@@ -216,20 +245,16 @@ app.get("/preload/:imdb_code/:torrent_hash", async (req, res) => {
             return res.status(404).json({ error: "Movie not found" });
         }
 
-        if (!movie.torrents || movie.torrents.length === 0) {
-            return res.status(404).json({ error: "Torrent not found" });
-        }
-
-        const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
+        const torrentMeta = findTorrent(movie, torrent_hash);
         if (!torrentMeta) {
             return res.status(404).json({ error: "Torrent not found" });
         }
 
-        const torrentUrl = torrentMeta.url;
+        // `at` is where the viewer will resume, as a fraction of the movie (0-1)
+        const result = await global.torrentManager.preloadTorrent(torrentMeta.hash, torrentSource(movie, torrentMeta), {
+            at: Number(req.query.at) || 0
+        });
 
-        // Preload the torrent
-        const result = await global.torrentManager.preloadTorrent(torrentUrl, torrent_hash);
-        
         res.json({
             status: "success",
             message: "Torrent preloading initiated",
@@ -241,146 +266,136 @@ app.get("/preload/:imdb_code/:torrent_hash", async (req, res) => {
             }
         });
     } catch (err) {
-        logger.error("Preload error: " + err);
+        logger.error("Preload error: " + err.message);
         res.status(500).json({ error: "Failed to preload torrent: " + err.message });
     }
 });
 
+function waitForDrain(res) {
+    return new Promise((resolve) => {
+        const done = () => {
+            res.removeListener('drain', done);
+            res.removeListener('close', done);
+            resolve();
+        };
+        res.on('drain', done);
+        res.on('close', done);
+    });
+}
+
+// Copies bytes `start`-`end` of a torrent file into the response. The headers are already sent at
+// this point, so errors just end the response (the browser then asks for the rest again).
+async function pipeTorrentFile(file, start, end, res, release) {
+    const iterator = file[Symbol.asyncIterator]({ start, end });
+    let remaining = end - start + 1;
+    let lastProgress = Date.now();
+    let closed = false;
+
+    // A stream nobody reads (a paused or forgotten tab) is closed after a while, so the torrent can go
+    // idle and be cleaned up instead of staying busy forever
+    const stallTimer = setInterval(() => {
+        if (Date.now() - lastProgress > STREAM_STALL_TIMEOUT) res.destroy();
+    }, 30 * 1000);
+
+    res.once('close', () => {
+        closed = true;
+        clearInterval(stallTimer);
+        // Stops downloading the pieces only this stream wanted
+        Promise.resolve(iterator.return && iterator.return()).catch(() => {});
+        release();
+    });
+
+    try {
+        for await (const chunk of iterator) {
+            if (closed) break;
+            const data = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+            remaining -= data.length;
+            lastProgress = Date.now();
+            if (!res.write(data)) await waitForDrain(res);
+            if (remaining <= 0) break;
+        }
+        if (!closed) res.end();
+    } catch (err) {
+        if (!closed) {
+            logger.warn(`Stopped streaming "${file.name}": ${err.message}`);
+            res.destroy();
+        }
+    }
+}
+
 app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;
 
+    let closed = false;
+    res.on('close', () => { closed = true; });
+
+    let movie;
     try {
-        const movie = await knex('movies').where({ imdb_code }).first();
-
-        if (!movie) {
-            return res.status(404).json({ error: "Movie not found" });
-        }
-
-        if (!movie.torrents || movie.torrents.length === 0) {
-            return res.status(404).json({ error: "Torrent not found" });
-        }
-
-        const torrentMeta = movie.torrents.find(torr => torr.hash === torrent_hash);
-        if (!torrentMeta) {
-            return res.status(404).json({ error: "Torrent not found" });
-        }
-        const torrentUrl = torrentMeta.url;
-
-        try {
-            // Get torrent from torrent manager
-            let torrentInstance = null;
-            
-            try {
-                torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
-            } catch (err) {
-                if (err.message && err.message.includes('duplicate torrent')) {
-                    // Try direct lookup if duplicate error occurs
-                    logger.info("Handling duplicate torrent error - attempting direct lookup");
-                    
-                    // Get the hash from the error message if possible
-                    const match = err.message.match(/duplicate torrent ([0-9a-f]+)/i);
-                    const hashToUse = match && match[1] ? match[1] : torrent_hash;
-                    
-                    // Try to get the torrent directly from the client
-                    const existingTorrent = global.torrentManager.torrentClient.get(hashToUse);
-                    if (existingTorrent) {
-                        // Register it in the manager
-                        global.torrentManager.activeTorrents.set(torrent_hash, {
-                            torrent: existingTorrent,
-                            refCount: 1,
-                            lastAccessed: Date.now()
-                        });
-                        torrentInstance = existingTorrent;
-                    } else {
-                        throw new Error("Could not retrieve torrent after duplicate error");
-                    }
-                } else {
-                    throw err;
-                }
-            }
-            
-            if (!torrentInstance) {
-                throw new Error("Failed to get torrent instance");
-            }
-            
-            const file = torrentInstance.files.find(file => file.name.endsWith('.mp4'));
-            if (!file) {
-                global.torrentManager.releaseReference(torrent_hash);
-                return res.status(404).json({ error: "MP4 file not found in torrent" });
-            }
-
-            const range = req.headers.range;
-            if (!range) {
-                global.torrentManager.releaseReference(torrent_hash);
-                return res.status(416).send('Requires Range header');
-            }
-
-            const ranges = rangeParser(file.length, range);
-            if (ranges === -1 || ranges === -2) {
-                global.torrentManager.releaseReference(torrent_hash);
-                return res.status(416).send('Invalid Range');
-            }
-
-            const { start, end } = ranges[0];
-            const chunksize = (end - start) + 1;
-
-            file.select();
-            
-            // Calculate which pieces this range needs
-            const startPiece = Math.floor(start / torrentInstance.pieceLength);
-            const endPiece = Math.floor(end / torrentInstance.pieceLength);
-            
-            // Prioritize additional pieces ahead for better buffering
-            const piecesToPrioritize = 10; 
-            const pieceEnd = Math.min(endPiece + piecesToPrioritize, torrentInstance.pieces.length - 1);
-            
-            // Use the torrent's piece selection API
-            torrentInstance.critical(startPiece, pieceEnd);
-
-            res.writeHead(206, {
-                "Content-Range": `bytes ${start}-${end}/${file.length}`,
-                "Accept-Ranges": "bytes",
-                "Content-Length": chunksize,
-                "Content-Type": "video/mp4"
-            });
-
-            const stream = file.createReadStream({ start, end });
-            let responded = false;
-
-            stream.on('error', (streamErr) => {
-                if (!responded) {
-                    responded = true;
-                    res.status(500).json({ error: 'Stream error' });
-                }
-                global.torrentManager.releaseReference(torrent_hash);
-            });
-
-            stream.on('end', () => {
-                responded = true;
-                global.torrentManager.releaseReference(torrent_hash);
-            });
-
-            res.on('close', () => {
-                if (!responded) {
-                    responded = true;
-                }
-                if (!stream.destroyed) {
-                    stream.destroy();
-                }
-                global.torrentManager.releaseReference(torrent_hash);
-            });
-
-            stream.pipe(res);
-        } catch (torrentError) {
-            logger.error("Torrent error: " + torrentError);
-            return res.status(500).json({ error: "Failed to start streaming: " + torrentError.message });
-        }
+        movie = await knex('movies').where({ imdb_code }).first();
     } catch (err) {
         logger.error("Stream error: " + err);
-        if (!res.headersSent) {
-            res.status(500).json({ error: err.message });
-        }
+        return res.status(500).json({ error: err.message });
     }
+
+    if (!movie) {
+        return res.status(404).json({ error: "Movie not found" });
+    }
+
+    const torrentMeta = findTorrent(movie, torrent_hash);
+    if (!torrentMeta) {
+        return res.status(404).json({ error: "Torrent not found" });
+    }
+
+    let lease;
+    try {
+        lease = await global.torrentManager.acquire(torrentMeta.hash, torrentSource(movie, torrentMeta));
+    } catch (err) {
+        logger.error(`Could not load the torrent of "${movie.title}": ${err.message}`);
+        if (!closed) {
+            res.status(503).json({ error: "This movie can't be loaded right now. Try again in a moment or pick another quality." });
+        }
+        return;
+    }
+
+    // The browser gave up (e.g. seeked somewhere else) while the torrent was loading
+    if (closed) {
+        return lease.release();
+    }
+
+    const file = TorrentManager.pickVideoFile(lease.torrent);
+    if (!file) {
+        lease.release();
+        return res.status(404).json({ error: "MP4 file not found in torrent" });
+    }
+
+    const ranges = req.headers.range ? rangeParser(file.length, req.headers.range, { combine: true }) : null;
+    if (ranges === -1) {
+        lease.release();
+        res.setHeader('Content-Range', `bytes */${file.length}`);
+        return res.status(416).send('Invalid Range');
+    }
+
+    // A malformed Range header is ignored and the whole file is sent, like any HTTP server does
+    const partial = Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length > 0;
+    const start = partial ? ranges[0].start : 0;
+    const end = partial ? ranges[0].end : file.length - 1;
+
+    res.status(partial ? 206 : 200);
+    res.set({
+        "Accept-Ranges": "bytes",
+        "Content-Length": end - start + 1,
+        "Content-Type": file.type || "video/mp4"
+    });
+    if (partial) {
+        res.set("Content-Range", `bytes ${start}-${end}/${file.length}`);
+    }
+
+    if (req.method === 'HEAD') {
+        lease.release();
+        return res.end();
+    }
+
+    pipeTorrentFile(file, start, end, res, lease.release);
 });
 
 // OpenSubtitles API configuration
@@ -395,7 +410,7 @@ async function getOpenSubtitlesToken() {
     if (openSubsToken && tokenExpiry && tokenExpiry > Date.now()) {
         return openSubsToken;
     }
-    
+
     try {
         const response = await axios.post(`${OPENSUBS_API_URL}/login`, {
             username: process.env.OPENSUBS_USERNAME,
@@ -407,11 +422,11 @@ async function getOpenSubtitlesToken() {
                 'User-Agent': OPENSUBS_USER_AGENT
             }
         });
-        
+
         // Set token with 24h expiry (or use actual expiry from response if available)
         openSubsToken = response.data.token;
         tokenExpiry = Date.now() + 23 * 60 * 60 * 1000; // 23 hours to be safe
-        
+
         logger.info("Successfully logged in to OpenSubtitles API");
         return openSubsToken;
     } catch (error) {
@@ -427,27 +442,23 @@ async function getOpenSubtitlesToken() {
 // Function to search and download subtitles for a movie
 async function getSubtitles(imdbId, language = 'en') {
     try {
-        // Ensure we have a valid token
-        const token = await getOpenSubtitlesToken();
-        
-        // Format the IMDb ID properly (OpenSubtitles expects the 'tt' prefix)
-        const formattedImdbId = imdbId.startsWith('tt') ? imdbId : `tt${imdbId}`;
-        
         // Create cache directory if it doesn't exist
-        const cacheDir = path.join(__dirname, 'subtitle_cache');
-        if (!fs.existsSync(cacheDir)) {
-            fs.mkdirSync(cacheDir, { recursive: true });
+        if (!fs.existsSync(SUBTITLE_CACHE_DIR)) {
+            fs.mkdirSync(SUBTITLE_CACHE_DIR, { recursive: true });
         }
-        
+
         // Check if we already have this subtitle cached
-        const cacheFilePath = path.join(cacheDir, `${imdbId}_${language}.vtt`);
+        const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}_${language}.vtt`);
         if (fs.existsSync(cacheFilePath)) {
-            // logger.info(`Using cached subtitle for ${imdbId} in ${language}`);
             return cacheFilePath;
         }
-        
-        // logger.info(`Searching for subtitles: IMDb ID ${formattedImdbId}, language ${language}`);
-        
+
+        // Ensure we have a valid token
+        const token = await getOpenSubtitlesToken();
+
+        // Format the IMDb ID properly (OpenSubtitles expects the 'tt' prefix)
+        const formattedImdbId = imdbId.startsWith('tt') ? imdbId : `tt${imdbId}`;
+
         // Search for subtitles - note we're using the proper OpenSubtitles format
         const searchResponse = await axios.get(`${OPENSUBS_API_URL}/subtitles`, {
             params: {
@@ -462,37 +473,31 @@ async function getSubtitles(imdbId, language = 'en') {
                 'Accept': 'application/json'
             }
         });
-        
-        // logger.info(`Search response received, found ${searchResponse.data.data?.length || 0} subtitles`);
-        
+
         if (!searchResponse.data.data || searchResponse.data.data.length === 0) {
             throw new Error(`No subtitles found for IMDb ID ${formattedImdbId} in language ${language}`);
         }
-        
+
         // Find the best subtitle (highest rated or first available)
         let bestSubtitle = null;
         for (const sub of searchResponse.data.data) {
-            if (!bestSubtitle || 
-                (sub.attributes.ratings && bestSubtitle.attributes.ratings && 
+            if (!bestSubtitle ||
+                (sub.attributes.ratings && bestSubtitle.attributes.ratings &&
                  sub.attributes.ratings > bestSubtitle.attributes.ratings)) {
                 bestSubtitle = sub;
             }
         }
-        
+
         if (!bestSubtitle) {
             throw new Error(`No suitable subtitle found for IMDb ID ${formattedImdbId} in language ${language}`);
         }
-        
-        // logger.info(`Selected subtitle: ${bestSubtitle.attributes.release || 'Unknown release'}`);
-        
+
         // Make sure there are files available
         if (!bestSubtitle.attributes.files || bestSubtitle.attributes.files.length === 0) {
             throw new Error('Selected subtitle has no files available');
         }
-        
+
         // Download subtitle file
-        // logger.info(`Downloading subtitle file_id: ${bestSubtitle.attributes.files[0].file_id}`);
-        
         const downloadResponse = await axios.post(
             `${OPENSUBS_API_URL}/download`,
             { file_id: bestSubtitle.attributes.files[0].file_id },
@@ -506,36 +511,33 @@ async function getSubtitles(imdbId, language = 'en') {
                 }
             }
         );
-        
+
         // Download the actual subtitle file
         const subtitleFileUrl = downloadResponse.data.link;
-        // logger.info(`Subtitle download URL: ${subtitleFileUrl}`);
-        
-        const subtitleResponse = await axios.get(subtitleFileUrl, { 
+
+        const subtitleResponse = await axios.get(subtitleFileUrl, {
             responseType: 'stream',
             headers: {
                 'User-Agent': OPENSUBS_USER_AGENT
             }
         });
-        
+
         // Convert SRT to VTT if needed and save to cache
         const fileStream = fs.createWriteStream(cacheFilePath);
-        
+
         if (subtitleFileUrl.endsWith('.srt')) {
             // Convert SRT to VTT
-            // logger.info(`Converting SRT to VTT for ${imdbId} in ${language}`);
             subtitleResponse.data.pipe(srtToVtt()).pipe(fileStream);
         } else {
-            // logger.info(`Saving subtitle as-is for ${imdbId} in ${language}`);
             subtitleResponse.data.pipe(fileStream);
         }
-        
+
         return new Promise((resolve, reject) => {
             fileStream.on('finish', () => {
                 logger.info(`Subtitle file saved to ${cacheFilePath}`);
                 resolve(cacheFilePath);
             });
-            
+
             fileStream.on('error', (err) => {
                 logger.error(`Error saving subtitle file: ${err.message}`);
                 reject(err);
@@ -551,162 +553,153 @@ async function getSubtitles(imdbId, language = 'en') {
     }
 }
 
-async function streamTorrentSubtitles(imdb_code, res) {
-    const movie = await knex('movies').where({ imdb_code }).first();
-
-    if (!movie) throw new Error("Movie not found");
-
-    const torrentMeta = movie.torrents[0];
-    if (!torrentMeta) throw new Error("No torrent metadata found for this movie");
-    const torrent_hash = torrentMeta.hash;
-    
-    const torrentUrl = torrentMeta.url;
-
-    let subtitleFiles = [];
-
-    try {
-        // Get the torrent instance
-        const torrentInstance = await global.torrentManager.getTorrent(torrentUrl, torrent_hash);
-    
-        // Find subtitle files (e.g., .srt or .vtt)
-        subtitleFiles = torrentInstance.files.filter(file =>
-            file.name.endsWith('.srt') || file.name.endsWith('.vtt')
-        );
-    
-        if (subtitleFiles.length === 0) {
-            global.torrentManager.releaseReference(torrent_hash);
-            logger.error("No subtitles found in torrent");
-            throw new Error("No subtitles found in torrent");
-        }
-    } catch (err) {
-        global.torrentManager.releaseReference(torrent_hash);
-        logger.error("Error getting torrent instance: " + err);
-        throw new Error("Failed to get torrent instance: " + err.message);
-    }
-
-    // Stream the subtitle file to the client
-    res.setHeader("Content-Type", "text/vtt");
-    
-    // Convert SRT to VTT if necessary
-    // Look for English subtitles specifically
-    const englishSubtitles = subtitleFiles.filter(file => 
-        (file.name.toLowerCase().includes('eng') || 
-        file.name.toLowerCase().includes('english')) && 
-        (file.name.endsWith('.srt') || file.name.endsWith('.vtt'))
-    );
-    
-    if (englishSubtitles.length === 0) {
-        logger.info("No English subtitles found in torrent");
-        global.torrentManager.releaseReference(torrent_hash);
-        return res.status(404).json({ error: "No English subtitles found" });
-    }
-    
-    // Use the first English subtitle
-    const subtitleFile = englishSubtitles[0];
-
-    const stream = subtitleFile.createReadStream();
-    
-    // Convert SRT to VTT if necessary
-    if (subtitleFile.name.endsWith('.srt')) {
-        stream.pipe(srtToVtt()).pipe(res);
-    } else {
-        stream.pipe(res);
-    }
-
-    stream.on("error", (err) => {
-        logger.error("Error streaming subtitle file: " + err);
-        global.torrentManager.releaseReference(torrent_hash);
-        res.status(500).json({ error: "Failed to stream subtitles" });
+function convertSrtToVtt(srt) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        Readable.from([srt]).pipe(srtToVtt())
+            .on('data', chunk => chunks.push(chunk))
+            .on('end', () => resolve(Buffer.concat(chunks)))
+            .on('error', reject);
     });
+}
 
-    stream.on("end", () => {
-        global.torrentManager.releaseReference(torrent_hash);
-    });
+// English subtitles shipped inside the torrent that is being watched (YTS releases usually have them)
+async function getTorrentSubtitles(imdbId, torrentHash) {
+    const infoHash = TorrentManager.normalizeHash(torrentHash);
+    const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}_${infoHash}_en.vtt`);
+    if (fs.existsSync(cacheFilePath)) {
+        return cacheFilePath;
+    }
+
+    const subtitles = await global.torrentManager.readSubtitleFile(infoHash);
+    if (!subtitles) {
+        return null;
+    }
+
+    const vtt = /\.vtt$/i.test(subtitles.name) ? subtitles.data : await convertSrtToVtt(subtitles.data);
+    await fs.promises.mkdir(SUBTITLE_CACHE_DIR, { recursive: true });
+    await fs.promises.writeFile(cacheFilePath, vtt);
+    logger.info(`Subtitle file saved to ${cacheFilePath}`);
+    return cacheFilePath;
 }
 
 // New endpoint for direct subtitle access (without torrent requirement)
 app.get("/subtitles/:imdb_code", async (req, res) => {
     const { imdb_code } = req.params;
-    const language = req.query.lang || 'en';
+    const language = String(req.query.lang || 'en');
+    const torrentHash = req.query.hash ? String(req.query.hash) : null;
 
-    if (!imdb_code) {
+    if (!imdb_code || !IMDB_CODE.test(imdb_code)) {
         return res.status(400).json({ error: "IMDb code is required" });
     }
 
-    if(language.length !== 2 || !/^[a-z]{2}$/.test(language)) {
+    if(!/^[a-z]{2}$/.test(language)) {
         return res.status(400).json({ error: "Invalid language code" });
     }
 
+    let subtitlePath = null;
+    if (language === "en" && torrentHash) {
+        try {
+            subtitlePath = await getTorrentSubtitles(imdb_code, torrentHash);
+        } catch (err) {
+            logger.warn(`Could not use the subtitles from the torrent: ${err.message}`);
+        }
+    }
+
     try {
-        if(language == "en") {
-            return await streamTorrentSubtitles(imdb_code, res);
+        if (!subtitlePath) {
+            subtitlePath = await getSubtitles(imdb_code, language);
         }
     } catch (err) {
-        logger.error("Error streaming torrent subtitles: " + err);
+        return res.status(404).json({ error: "Subtitles not found" });
     }
-    
-    try {
-        const subtitlePath = await getSubtitles(imdb_code, language);
-        
-        // Stream the subtitle file to the client
-        res.setHeader("Content-Type", "text/vtt");
-        
-        const subtitleStream = fs.createReadStream(subtitlePath);
-        subtitleStream.pipe(res);
-        
-        subtitleStream.on("error", (err) => {
+
+    res.type('text/vtt').sendFile(subtitlePath, (err) => {
+        if (err && !res.headersSent) {
             logger.error("Error streaming subtitle file: " + err);
             res.status(500).json({ error: "Failed to stream subtitles" });
-        });
-    } catch (err) {
-        logger.error("Error fetching subtitles: " + err);
-        res.status(404).json({ error: "Subtitles not found" });
-    }
+        }
+    });
 });
 
-app.get("/search", (req, res, next) => {
-    req.knex = knex;
-    next();
-}, Authorization, async (req, res) => {
-    const { query } = req.query;
+// OMDb has the best title matching and YTS has what can actually be streamed, so both are searched.
+// Results keep OMDb's order, followed by the extra matches from YTS.
+async function searchMovies(query) {
+    const [omdb, ytsSearch] = await Promise.allSettled([
+        axios.get(OMDB_URL, { params: { s: query, type: 'movie', apikey: OMDB_API_KEY }, timeout: 10000 }),
+        yts.listMovies({ query_term: query, limit: 20, sort_by: 'download_count' })
+    ]);
+
+    if (omdb.status === 'rejected' && ytsSearch.status === 'rejected') {
+        throw new Error(`OMDb: ${omdb.reason.message}, YTS: ${ytsSearch.reason.message}`);
+    }
+
+    const found = new Map(); // IMDb code -> YTS movie
+    if (ytsSearch.status === 'fulfilled') {
+        for (const movie of ytsSearch.value) {
+            found.set(movie.imdb_code, movie);
+        }
+    } else {
+        logger.warn(`YTS search failed: ${ytsSearch.reason.message}`);
+    }
+
+    let omdbCodes = [];
+    if (omdb.status === 'fulfilled') {
+        omdbCodes = [...new Set((omdb.value.data.Search || []).map(result => result.imdbID))];
+    } else {
+        logger.warn(`OMDb search failed: ${omdb.reason.message}`);
+    }
+
+    // OMDb only gives us the IMDb code, so look those movies up on YTS
+    await mapLimit(omdbCodes.filter(code => !found.has(code)), 5, async (code) => {
+        try {
+            const movie = await yts.getMovieDetails(code);
+            if (movie) found.set(code, movie);
+        } catch (err) {
+            logger.warn(`Could not look up ${code} on YTS: ${err.message}`);
+        }
+    });
+
+    const codes = [
+        ...omdbCodes.filter(code => found.has(code)),
+        ...[...found.keys()].filter(code => !omdbCodes.includes(code))
+    ].filter(code => {
+        const movie = found.get(code);
+        return movie.torrents && movie.torrents.length > 0;
+    });
+
+    for (const code of codes) {
+        await uploadMovie(found.get(code), "yts").catch(() => {});
+    }
+
+    const rows = codes.length ? await knex('movies').whereIn('imdb_code', codes) : [];
+    const byCode = new Map(rows.map(movie => [movie.imdb_code, movie]));
+    return codes.map(code => byCode.get(code)).filter(Boolean);
+}
+
+app.get("/search", withKnex, Authorization, async (req, res) => {
+    const query = String(req.query.query || '').trim();
     if (!query) return res.status(400).json({ error: "Query is required" });
 
     try {
-        const response = await axios.get(OMDB_URL, {
-            params: { s: query, apikey: OMDB_API_KEY },
-        });
-
-        if (response.data.Response === "False") {
-            return res.status(404).json({ error: response.data.Error });
-        }
-
-        response.data.Search.forEach(async (search) => {
-            const data = await axios.get("https://yts.lt/api/v2/movie_details.json?imdb_id=" + search.imdbID);
-            movie = data.data.data.movie;
-            await uploadMovie(movie, "yts");
-        });
-
-        res.json(response.data.Search);
+        res.json({ movies: await searchMovies(query) });
     } catch (error) {
-        logger.error(error);
+        logger.error("Search error: " + error.message);
         res.status(500).json({ error: "Failed to fetch movies" });
     }
 });
 
 async function loadCategories() {
-    categories = [];
     try {
-        const load = await knex('categories').select('*');
+        const load = await knex('categories').select('*').orderBy('id');
+        const loaded = [];
         for(const category of load) {
-            category.movies = category.movies;
-            category.movies = category.movies.sort(() => Math.random() - 0.5);
-            const movies = [];
-            category.movies.map(async movie => {
-                const data = await knex('movies').where({ imdb_code: movie }).first();
-                movies.push(data);
-            });
-            categories.push({ name: category.name, movies });
+            const codes = [...category.movies].sort(() => Math.random() - 0.5);
+            const movies = codes.length ? await knex('movies').whereIn('imdb_code', codes) : [];
+            const byCode = new Map(movies.map(movie => [movie.imdb_code, movie]));
+            loaded.push({ name: category.name, movies: codes.map(code => byCode.get(code)).filter(Boolean) });
         }
+        categories = loaded;
         return categories;
     } catch (dbError) {
         logger.error("Database error: " + dbError);
@@ -735,72 +728,74 @@ const fetchTrendingMovies = async () => {
         // { id: 37, name: "Western" }
     ];
 
-    await knex('categories').del();
-
-    const trendingMovies = await axios.get(`https://api.themoviedb.org/3/trending/movie/day?api_key=${process.env.TMDB_API_KEY}`);
-    const newMovies = await axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${process.env.TMDB_API_KEY}`);
-    const popular = await axios.get(`https://api.themoviedb.org/3/movie/popular?api_key=${process.env.TMDB_API_KEY}`);
-    const topRated = await axios.get(`https://api.themoviedb.org/3/movie/top_rated?api_key=${process.env.TMDB_API_KEY}`);
-
-    const trendingMoviesData = trendingMovies.data.results;
-    const newMoviesData = newMovies.data.results;
-    const popularMoviesData = popular.data.results;
-    const topRatedMoviesData = topRated.data.results;
-
-    const allCategories = [
-        { name: "Trending", movies: trendingMoviesData },
-        { name: "New Movies", movies: newMoviesData },
-        { name: "Popular", movies: popularMoviesData },
-        { name: "Top Rated", movies: topRatedMoviesData },
+    const lists = [
+        { name: "Trending", path: '/trending/movie/day' },
+        { name: "New Movies", path: '/movie/now_playing' },
+        { name: "Popular", path: '/movie/popular' },
+        { name: "Top Rated", path: '/movie/top_rated' },
+        ...genres.map(genre => ({ name: genre.name, path: '/discover/movie', params: { with_genres: genre.id } }))
     ];
 
-    // Fetch movies by genre
-    for (const genre of genres) {
-        const genreMovies = await axios.get(`https://api.themoviedb.org/3/discover/movie?api_key=${process.env.TMDB_API_KEY}&with_genres=${genre.id}`);
-        allCategories.push({ name: genre.name, movies: genreMovies.data.results });
+    const allCategories = [];
+    for (const list of lists) {
+        const response = await tmdb.get(list.path, { params: list.params });
+        allCategories.push({ name: list.name, movies: response.data.results });
     }
 
-    for (const category of allCategories) {
-        let categoryMovies = [];
-        logger.info(`Fetching YTS movies for category ${category.name}...`);
-        for (const movie of category.movies) {
-            if (movie.original_title) {
-                try {
-                    const data = await axios.get(`https://yts.lt/api/v2/list_movies.json?query_term=${movie.original_title}&limit=1`);
-                    const ytsMovie = data.data.data.movies[0];
-                    if (ytsMovie) {
-                        ytsMovie.overview = movie.overview;
-                        categoryMovies.push(ytsMovie);
-                        logger.info(`✅ ${ytsMovie.title}`);
-                    } else {
-                        logger.warn(`❌ ${movie.original_title}`);
-                    }
-                } catch (error) {
-                    logger.warn(`❌ ${movie.original_title}`);
-                }
-            }
+    // TMDB movie -> IMDb code -> that exact movie on YTS. Searching YTS by title instead picks a
+    // different movie with a similar name surprisingly often.
+    const lookups = new Map(); // TMDB id -> Promise of the YTS movie (or null)
+    const findOnYts = (tmdbMovie) => {
+        if (!lookups.has(tmdbMovie.id)) {
+            lookups.set(tmdbMovie.id, (async () => {
+                const ids = await tmdb.get(`/movie/${tmdbMovie.id}/external_ids`);
+                if (!ids.data.imdb_id) return null;
+                const ytsMovie = await yts.getMovieDetails(ids.data.imdb_id);
+                if (!ytsMovie || !ytsMovie.torrents || !ytsMovie.torrents.length) return null;
+                ytsMovie.overview = tmdbMovie.overview;
+                return ytsMovie;
+            })().catch(() => null));
         }
+        return lookups.get(tmdbMovie.id);
+    };
+
+    const newCategories = [];
+    for (const category of allCategories) {
+        logger.info(`Fetching YTS movies for category ${category.name}...`);
+        const matches = await mapLimit(category.movies, 6, async (movie) => {
+            const ytsMovie = await findOnYts(movie);
+            if (ytsMovie) {
+                logger.info(`✅ ${ytsMovie.title}`);
+            } else {
+                logger.warn(`❌ ${movie.title}`);
+            }
+            return ytsMovie;
+        });
+        const categoryMovies = matches.filter(Boolean);
 
         logger.info(`Uploading ${categoryMovies.length} movies for category ${category.name}...`);
+        const uploaded = [];
         for(const movie of categoryMovies) {
-            await uploadMovie(movie, "yts");
-        }
-        logger.info(`Uploaded ${categoryMovies.length} movies for category ${category.name}!`);
-
-        try {
-            logger.info(`Inserting category ${category.name} into database...`);
-            const existingCategory = await knex('categories').where({ name: category.name }).first();
-            const movieIds = categoryMovies.map(movie => movie.imdb_code);
-            if (existingCategory) {
-                await knex('categories').where({ name: category.name }).update({ movies: JSON.stringify(movieIds) });
-            } else {
-                await knex('categories').insert({ name: category.name, movies: JSON.stringify(movieIds) });
+            try {
+                await uploadMovie(movie, "yts");
+                uploaded.push(movie.imdb_code);
+            } catch (err) {
+                // already logged by uploadMovie
             }
-            logger.info(`Category ${category.name} inserted successfully!`);
-        } catch (dbError) {
-            logger.error(`Database insertion error for category ${category.name}: ${dbError}`);
         }
+        logger.info(`Uploaded ${uploaded.length} movies for category ${category.name}!`);
+
+        newCategories.push({ name: category.name, movies: [...new Set(uploaded)] });
     }
+
+    // Swap the categories in one go, so a failed refresh never leaves the home page empty
+    await knex.transaction(async (trx) => {
+        await trx('categories').del();
+        for (const category of newCategories) {
+            await trx('categories').insert({ name: category.name, movies: JSON.stringify(category.movies) });
+        }
+    });
+    logger.info(`Inserted ${newCategories.length} categories into database!`);
 
     await loadCategories();
 
@@ -810,68 +805,47 @@ const fetchTrendingMovies = async () => {
 let lastFetchTime = Date.now(); // Store the timestamp of the last fetch
 const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
 
-setInterval(async () => {
+async function emailAdmin(subject, text, html) {
     const adminUser = await knex('users').where({ role: 'admin' }).first();
     if (!adminUser) {
-        logger.warn("No admin user found. Please create an admin account.");
+        return logger.warn("No admin user found. Please create an admin account.");
     }
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-        host: 'smtp.sendgrid.net',
-        port: 587,
-        secure: false,
-        auth: {
-            user: 'apikey',
-            pass: process.env.SENDGRID_API_KEY
-        }
-    });
-    
+
+    try {
+        await transporter.sendMail({ from: process.env.EMAIL_USER, to: adminUser.email, subject, text, html });
+    } catch (error) {
+        logger.error("Error sending email: " + (error.message || error));
+    }
+}
+
+setInterval(async () => {
+    const URL = process.env.FRONTEND_URL || "http://localhost:3000";
+
     try {
         await fetchTrendingMovies();
         lastFetchTime = Date.now(); // Update the last fetch time
 
-        const URL = process.env.FRONTEND_URL || "http://localhost:3000";
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: adminUser.email,
-            subject: 'Successfully Refreshed the Categories! Streamify',
-            text: `The categories have been successfully refreshed! You can check them out on ${URL}`,
-            html: `
+        await emailAdmin(
+            'Successfully Refreshed the Categories! Streamify',
+            `The categories have been successfully refreshed! You can check them out on ${URL}`,
+            `
                 <div style="font-family: Arial, sans-serif; line-height: 1.6;">
                     <p>The categories have been successfully refreshed! You can check them out on <a href="${URL}">${URL}</a></p>
                 </div>
             `
-        };
-
-        transporter.sendMail(mailOptions, (error, info) => {
-            if(error){
-                logger.error(error);
-                return res.status(500).json({ message: 'Error sending email' });
-            }
-            return res.status(200).json({ message: 'Email sent' });
-        });
+        );
     } catch (err) {
         logger.error("Error fetching trending movies: " + err);
-        const URL = process.env.FRONTEND_URL || "http://localhost:3000";
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: adminUser.email,
-            subject: 'Error Refreshing the Categories! Streamify',
-            text: `There was an error refreshing the categories. Please check the server logs for more information.`,
-            html: `
+
+        await emailAdmin(
+            'Error Refreshing the Categories! Streamify',
+            `There was an error refreshing the categories. Please check the server logs for more information.`,
+            `
                 <div style="font-family: Arial, sans-serif; line-height: 1.6;">
                     <p>There was an error refreshing the categories. Please check the server logs for more information.</p>
                 </div>
             `
-        };
-
-        transporter.sendMail(mailOptions, (error, info) => {
-            if(error){
-                logger.error(error);
-                return res.status(500).json({ message: 'Error sending email' });
-            }
-            return res.status(200).json({ message: 'Email sent' });
-        });
+        );
     }
 }, SEVEN_DAYS_IN_MS);
 
@@ -881,23 +855,36 @@ function nextRefresh() {
     return nextRefreshTime;
 }
 
-// Dynamically import WebTorrent and initialize torrentClient before starting the server
+// Errors thrown by route handlers end up here instead of in Express' HTML error page
+app.use((err, req, res, next) => {
+    const status = err.status || err.statusCode || 500;
+    if (status >= 500) {
+        logger.error(`${req.method} ${req.originalUrl} failed: ${err.message || err}`);
+    }
+    if (res.headersSent) {
+        return res.destroy();
+    }
+    res.status(status).json({ error: status < 500 || err.message === "Not allowed by CORS" ? err.message : "Internal server error" });
+});
+
+// Dynamically import WebTorrent and initialize the torrent manager before starting the server
 (async () => {
     try {
         const { default: WebTorrent } = await import('webtorrent');
-        torrentClient = new WebTorrent();
-        torrentClient.setMaxListeners(50); // Increased from 20
-        
-        // Initialize the torrent manager
-        const torrentManager = new TorrentManager(torrentClient);
-        
-        // Clean up idle torrents every 10 minutes
-        setInterval(() => {
-            torrentManager.cleanupIdleTorrents();
-        }, torrentManager.timeForCleanup);
 
         // Make torrentManager available globally
-        global.torrentManager = torrentManager;
+        global.torrentManager = new TorrentManager(WebTorrent, {
+            downloadPath: process.env.TORRENT_DOWNLOAD_PATH || path.join(os.tmpdir(), 'streamify-torrents'),
+            idleTimeout: (Number(process.env.TORRENT_IDLE_MINUTES) || 10) * 60 * 1000,
+            maxTorrents: Number(process.env.TORRENT_MAX_ACTIVE) || 4,
+            client: {
+                // Connection attempts count against this limit too, and most peers in a swarm can't be
+                // reached, so the default of 55 makes movies take several times longer to start
+                maxConns: Number(process.env.TORRENT_MAX_CONNECTIONS) || 150
+            }
+        });
+        // Start the client (and its DHT) now, so the first movie finds peers faster
+        global.torrentManager.getClient();
 
         // Continue with any other initialization before starting the server...
         ensureSchema().then(async () => {

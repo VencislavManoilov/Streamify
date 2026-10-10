@@ -1,9 +1,9 @@
 <template>
     <Register v-if="status === 1" />
     <Login v-else-if="status === 0" />
+    <LoadingSpinner v-else-if="loading && !error" overlay label="Loading" />
     <div v-else class="auth-container">
-        <p v-if="loading && !error">Loading...</p>
-        <p v-else-if="error">An error occurred: {{ error.message }}</p>
+        <p>An error occurred: {{ error.message }}</p>
     </div>
 </template>
 
@@ -11,6 +11,7 @@
 import axios from 'axios';
 import Register from './Register.vue';
 import Login from './Login.vue';
+import LoadingSpinner from '../LoadingSpinner.vue';
 
 const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
 
@@ -25,7 +26,8 @@ export default {
     },
     components: {
         Register,
-        Login
+        Login,
+        LoadingSpinner
     },
     async mounted() {
         // Check if user is already logged in

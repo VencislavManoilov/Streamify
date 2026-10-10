@@ -32,8 +32,45 @@ const schemaDefinition = {
     name: { type: 'string', unique: true, notNullable: true },
     movies: { type: 'json', notNullable: true },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // One row per user and movie: where they stopped and how long they have watched it
+  watch_history: {
+    id: { type: 'increments', primary: true },
+    user_id: { type: 'integer', notNullable: true, references: 'users.id', onDelete: 'CASCADE' },
+    imdb_code: { type: 'string', notNullable: true },
+    position: { type: 'float', notNullable: true, defaultTo: 0 },
+    duration: { type: 'float', notNullable: true, defaultTo: 0 },
+    watched_seconds: { type: 'float', notNullable: true, defaultTo: 0 },
+    completed: { type: 'boolean', notNullable: true, defaultTo: false },
+    last_watched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   }
 };
+
+// Constraints that span more than one column, added when the table is created
+const tableConstraints = {
+  watch_history: {
+    unique: [['user_id', 'imdb_code']],
+  }
+};
+
+function addColumn(table, columnName, columnProps) {
+  let column;
+  if (columnProps.type === 'increments') {
+    column = table.increments(columnName);
+  } else {
+    column = table[columnProps.type](columnName);
+  }
+
+  if (columnProps.primary) column.primary();
+  if (columnProps.notNullable) column.notNullable();
+  if (columnProps.unique) column.unique();
+  if (columnProps.defaultTo !== undefined) column.defaultTo(columnProps.defaultTo);
+  if (columnProps.references) {
+    column.references(columnProps.references);
+    if (columnProps.onDelete) column.onDelete(columnProps.onDelete);
+  }
+}
 
 async function ensureSchema() {
   for (const [tableName, columns] of Object.entries(schemaDefinition)) {
@@ -43,17 +80,12 @@ async function ensureSchema() {
       logger.info(`Creating ${tableName} table...`);
       await knex.schema.createTable(tableName, (table) => {
         for (const [columnName, columnProps] of Object.entries(columns)) {
-          let column;
-          if (columnProps.type === 'increments') {
-            column = table.increments(columnName);
-          } else {
-            column = table[columnProps.type](columnName);
-          }
+          addColumn(table, columnName, columnProps);
+        }
 
-          if (columnProps.primary) column.primary();
-          if (columnProps.notNullable) column.notNullable();
-          if (columnProps.unique) column.unique();
-          if (columnProps.defaultTo !== undefined) column.defaultTo(columnProps.defaultTo);
+        const constraints = tableConstraints[tableName] || {};
+        for (const uniqueColumns of constraints.unique || []) {
+          table.unique(uniqueColumns);
         }
       });
     } else {
@@ -64,17 +96,7 @@ async function ensureSchema() {
         if (!existingColumns[columnName]) {
           logger.info(`Adding "${columnName}" column to ${tableName} table...`);
           await knex.schema.alterTable(tableName, (table) => {
-            let column;
-            if (columnProps.type === 'increments') {
-              column = table.increments(columnName);
-            } else {
-              column = table[columnProps.type](columnName);
-            }
-
-            if (columnProps.primary) column.primary();
-            if (columnProps.notNullable) column.notNullable();
-            if (columnProps.unique) column.unique();
-            if (columnProps.defaultTo !== undefined) column.defaultTo(columnProps.defaultTo);
+            addColumn(table, columnName, columnProps);
           });
         }
       }

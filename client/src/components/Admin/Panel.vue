@@ -20,16 +20,15 @@
                     <p>Idle Torrents: {{ stats.torrents.idleTorrents }}</p>
                 </div>
             </div>
-            <div v-else>
-                <p>Loading...</p>
-            </div>
+            <LoadingSpinner v-else :size="40" label="Loading stats" />
         </div>
         <div class="categories">
             <h2>Categories</h2>
-            <p>Next Reset: {{ nextReset }}</p>
+            <div class="next-reset">Next Reset: <span v-if="nextReset">{{ nextReset }}</span><LoadingSpinner v-else :size="18" label="Loading the next reset" /></div>
             <div>
                 <button @click="resetCategories">Manual Reset</button>
-                <p v-if="resetCategoriesStatus">{{ resetCategoriesStatus }}</p>
+                <LoadingSpinner v-if="resettingCategories" :size="28" label="Resetting the categories" />
+                <p v-else-if="resetCategoriesStatus">{{ resetCategoriesStatus }}</p>
             </div>
         </div>
         <div class="users">
@@ -106,11 +105,15 @@
 
 <script>
 import axios from 'axios';
+import LoadingSpinner from '../LoadingSpinner.vue';
 
 const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
 
 export default {
     name: 'AdminPanel',
+    components: {
+        LoadingSpinner
+    },
     data() {
         return {
             users: [],
@@ -119,9 +122,10 @@ export default {
             inviteError: '',
             inviteSuccess: '',
             stats: null,
-            nextReset: 'Loading...',
+            nextReset: '',
             nextResetInterval: null,
             resetCategoriesStatus: '',
+            resettingCategories: false,
             logs: [],
             expandedUsers: [],
         };
@@ -226,7 +230,8 @@ export default {
             }
 
             try {
-                this.resetCategoriesStatus = 'Resetting...';
+                this.resettingCategories = true;
+                this.resetCategoriesStatus = '';
                 const response = await axios.post(URL+'/admin/reset-categories', {}, {
                     headers: {
                         Authorization: localStorage.getItem('token')
@@ -235,8 +240,10 @@ export default {
                 this.resetCategoriesStatus = response.data.message || 'Categories reset successfully';
                 this.getStats();
             } catch (error) {
-                this.resetCategoriesStatus = error.response.data.message || error.response.data || 'An error occurred';
+                this.resetCategoriesStatus = (error.response && (error.response.data.message || error.response.data)) || 'An error occurred';
                 console.error('Error resetting categories:', error);
+            } finally {
+                this.resettingCategories = false;
             }
         },
         async getLogs() {
@@ -365,6 +372,21 @@ export default {
 
 .shutdown:hover {
     background-color: darkred;
+}
+
+.next-reset {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.next-reset .spinner {
+    padding: 0;
+}
+
+.stats > .spinner {
+    justify-content: center;
 }
 
 .stats > div {

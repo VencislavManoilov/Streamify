@@ -22,6 +22,7 @@
 
 <script>
 import axios from 'axios';
+import { session } from '../../session';
 
 const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
 
@@ -44,13 +45,13 @@ export default {
                     password: this.password
                 });
                 if(response.data.token) {
-                    localStorage.setItem('token', response.data.token);
+                    await session.login(response.data.token);
                     this.$router.push('/admin/panel');
                 } else {
                     this.error = response.data.message;
                 }
             } catch(error) {
-                this.error = error.response.data.message;
+                this.error = (error.response && (error.response.data.message || error.response.data)) || 'The server could not be reached';
             }
         }
     }
