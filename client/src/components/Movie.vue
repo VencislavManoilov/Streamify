@@ -25,7 +25,7 @@
                 <div v-if="!start" class="overlay start">
                     <template v-if="selectedTorrent && !showTorrents">
                         <button class="play-button" type="button" :aria-label="resumeAt ? `Resume from ${formatTime(resumeAt)}` : 'Play'" @click="startMovie()">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.8v12.4L18.6 12z" /></svg>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.6 5.75v12.5L18.1 12z" /></svg>
                         </button>
                         <template v-if="resumeAt">
                             <p class="resume">Resume from {{ formatTime(resumeAt) }}</p>
@@ -690,10 +690,10 @@ export default {
     background: rgba(255, 255, 255, 0.2);
 }
 
+/* The triangle is drawn a hair right of center, which is what looks centered in a circle */
 .play-button svg {
     width: 40px;
     height: 40px;
-    margin-left: 4px;
     fill: currentColor;
 }
 
