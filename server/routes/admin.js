@@ -1,11 +1,21 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const axios = require('axios');
+const fs = require('fs');
+const os = require('os');
 const logger = require('../utils/logger');
-const transporter = require('../utils/mailer');
+const { sendMail, checkMail, getMailStatus } = require('../utils/mailer');
+const { YTS_API_URL } = require('../utils/yts');
 const { signSessionToken } = require('../middleware/Auth');
+const TorrentManager = require('../utils/torrentManager');
 
 const router = express.Router();
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ROLES = ['user', 'admin'];
+const DAY = 24 * 60 * 60 * 1000;
+const CHECK_TIMEOUT = 8000;
 
 const Authorization = async (req, res, next) => {
     const token = req.headers.authorization;
@@ -16,14 +26,15 @@ const Authorization = async (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        
+
         const user = await req.knex('users').where({ email: decoded.email }).first();
         if(!user) {
             return res.status(401).send('Unauthorized');
         }
 
+        // 403, not 401: the session is fine, it just isn't an admin one
         if(user.role !== 'admin') {
-            return res.status(401).json({ message: 'You have to be admin for god sake!' });
+            return res.status(403).json({ message: 'You have to be admin for god sake!' });
         }
 
         req.user = user;
@@ -34,8 +45,24 @@ const Authorization = async (req, res, next) => {
     }
 }
 
+// The password hash never leaves the server
+function publicUser(user) {
+    const { password, ...rest } = user;
+    return rest;
+}
+
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
+
+const toNumber = value => Number(value) || 0;
+
+function errorMessage(err) {
+    return (err && err.message) || String(err);
+}
+
 router.get('/status', async (req, res) => {
-    const users = await req.knex('users').select("*");
+    const users = await req.knex('users').select("id").limit(1);
 
     if(!users || users.length === 0) {
         res.status(200).json({ status: 1, message: "Needs admin account" });
@@ -65,7 +92,7 @@ router.post('/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = { username, email, password: hashedPassword, role: 'admin' };
-    
+
     try {
         const token = signSessionToken(user.email);
         await req.knex('users').insert(user);
@@ -93,30 +120,278 @@ router.post('/login', async (req, res) => {
     }
 });
 
-router.get('/users', Authorization, async (req, res) => {
-    const users = await req.knex('users').select("*");
-    res.status(200).json(users);
+router.get('/me', Authorization, async (req, res) => {
+    res.json({ user: publicUser(req.user) });
 });
 
-router.get('/me', Authorization, async (req, res) => {
-    if (!req.user) {
-        return res.status(401).send('Unauthorized');
+// Every user with how much they watch
+router.get('/users', Authorization, async (req, res) => {
+    const knex = req.knex;
+
+    try {
+        const history = knex('watch_history')
+            .select('user_id')
+            .count('* as movies')
+            .sum('watched_seconds as seconds')
+            .max('last_watched_at as last_watched_at')
+            .groupBy('user_id')
+            .as('h');
+        const saved = knex('watchlist').select('user_id').count('* as saved').groupBy('user_id').as('w');
+
+        const rows = await knex('users as u')
+            .leftJoin(history, 'h.user_id', 'u.id')
+            .leftJoin(saved, 'w.user_id', 'u.id')
+            .select('u.id', 'u.username', 'u.email', 'u.role', 'u.created_at', 'h.movies', 'h.seconds', 'h.last_watched_at', 'w.saved')
+            .orderBy('u.id');
+
+        res.status(200).json(rows.map(row => ({
+            ...row,
+            movies: toNumber(row.movies),
+            seconds: Math.round(toNumber(row.seconds)),
+            saved: toNumber(row.saved)
+        })));
+    } catch(err) {
+        logger.error('Error fetching users: ' + errorMessage(err));
+        res.status(500).json({ message: 'Error fetching users' });
+    }
+});
+
+// One user with what they watched and saved most recently
+router.get('/user/:id', Authorization, async (req, res) => {
+    try {
+        const user = await req.knex('users').where({ id: req.params.id }).first();
+        if(!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const history = await req.knex('watch_history as h')
+            .join('movies as m', 'm.imdb_code', 'h.imdb_code')
+            .where('h.user_id', user.id)
+            .orderBy('h.last_watched_at', 'desc')
+            .limit(12)
+            .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image', 'h.position', 'h.duration', 'h.watched_seconds', 'h.completed', 'h.last_watched_at');
+
+        const watchlist = await req.knex('watchlist as w')
+            .join('movies as m', 'm.imdb_code', 'w.imdb_code')
+            .where('w.user_id', user.id)
+            .orderBy('w.created_at', 'desc')
+            .limit(12)
+            .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image', 'w.created_at');
+
+        res.json({ user: publicUser(user), history, watchlist });
+    } catch(err) {
+        logger.error('Error fetching user: ' + errorMessage(err));
+        res.status(500).json({ message: 'Error fetching the user' });
+    }
+});
+
+router.patch('/user/:id', Authorization, async (req, res) => {
+    const { role } = req.body;
+
+    if(!ROLES.includes(role)) {
+        return res.status(400).json({ message: `Role must be one of: ${ROLES.join(', ')}` });
     }
 
-    res.json({ user: req.user });
+    try {
+        const user = await req.knex('users').where({ id: req.params.id }).first();
+        if(!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Taking away your own admin role would lock you out of this panel
+        if(user.id === req.user.id) {
+            return res.status(400).json({ message: 'You can not change your own role' });
+        }
+
+        await req.knex('users').where({ id: user.id }).update({ role });
+        logger.info(`${req.user.username} changed the role of ${user.username} to ${role}`);
+        res.json({ user: publicUser({ ...user, role }) });
+    } catch(err) {
+        logger.error('Error changing role: ' + errorMessage(err));
+        res.status(500).json({ message: 'Error changing the role' });
+    }
 });
 
-router.get('/stats', Authorization, async (req, res) => {
-    try {
-        const users = await req.knex('users').count('id as count').first();
-        const movies = await req.knex('movies').count('id as count').first();
-        const categories = await req.knex('categories').count('id as count').first();
-        const torrents = req.torrentManager.getStats();
+router.delete('/user/:id', Authorization, async (req, res) => {
+    const id = req.params.id;
 
-        res.status(200).json({ users, movies, categories, torrents });
+    if(!id) {
+        return res.status(400).send('User ID not found');
+    }
+
+    if(String(req.user.id) === String(id)) {
+        return res.status(400).json({ message: 'You can not delete your own account' });
+    }
+
+    try {
+        const user = await req.knex('users').where({ id }).first();
+        if(!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        await req.knex('users').where({ id }).delete();
+        logger.info(`${req.user.username} deleted the user ${user.username} (${user.email})`);
+        res.status(200).send('User deleted');
+    } catch(err) {
+        res.status(500).send('Error deleting user');
+    }
+});
+
+async function diskUsage(folder) {
+    if (!folder || !fs.promises.statfs) return null;
+    try {
+        const stats = await fs.promises.statfs(folder);
+        return { path: folder, total: stats.blocks * stats.bsize, free: stats.bavail * stats.bsize };
+    } catch (err) {
+        return null;
+    }
+}
+
+// Everything the overview page shows in one request
+router.get('/stats', Authorization, async (req, res) => {
+    const knex = req.knex;
+
+    try {
+        const count = (query) => query.count('* as count').first().then(row => toNumber(row && row.count));
+        const weekAgo = new Date(Date.now() - 7 * DAY);
+        const monthAgo = new Date(Date.now() - 30 * DAY);
+
+        const [users, admins, newUsers, movies, categories, plays, finished, watched, activeUsers, saved, requests] = await Promise.all([
+            count(knex('users')),
+            count(knex('users').where({ role: 'admin' })),
+            count(knex('users').where('created_at', '>', monthAgo)),
+            count(knex('movies')),
+            count(knex('categories')),
+            count(knex('watch_history')),
+            count(knex('watch_history').where({ completed: true })),
+            knex('watch_history').sum('watched_seconds as seconds').first(),
+            knex('watch_history').where('last_watched_at', '>', weekAgo).countDistinct('user_id as count').first(),
+            count(knex('watchlist')),
+            count(knex('access_requests').whereNull('invited_at'))
+        ]);
+
+        const torrents = req.torrentManager ? req.torrentManager.getStats() : null;
+        const memory = process.memoryUsage();
+        const mail = getMailStatus();
+
+        res.status(200).json({
+            users: { count: users, admins, newThisMonth: newUsers, activeThisWeek: toNumber(activeUsers && activeUsers.count) },
+            movies: { count: movies },
+            categories: { count: categories, nextRefresh: req.nextRefresh ? req.nextRefresh() : null },
+            watching: {
+                plays,
+                finished,
+                seconds: Math.round(toNumber(watched && watched.seconds)),
+                saved
+            },
+            requests: { pending: requests },
+            torrents,
+            mail: { configured: mail.configured, current: mail.current, uptime: mail.uptime, checking: mail.checking },
+            server: {
+                uptime: Math.round(process.uptime()),
+                startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+                node: process.version,
+                platform: `${os.type()} ${os.release()} (${os.arch()})`,
+                hostname: os.hostname(),
+                cpus: os.cpus().length,
+                load: os.loadavg(),
+                memory: { rss: memory.rss, heapUsed: memory.heapUsed, heapTotal: memory.heapTotal },
+                system: { total: os.totalmem(), free: os.freemem() },
+                disk: await diskUsage(torrents && torrents.downloadPath)
+            }
+        });
     } catch(err) {
         res.status(500).json({ message: 'Error fetching stats', error: err.message || err });
     }
+});
+
+// What people watched lately and the most watched movies
+router.get('/activity', Authorization, async (req, res) => {
+    try {
+        const recent = await req.knex('watch_history as h')
+            .join('users as u', 'u.id', 'h.user_id')
+            .join('movies as m', 'm.imdb_code', 'h.imdb_code')
+            .orderBy('h.last_watched_at', 'desc')
+            .limit(15)
+            .select('u.id as user_id', 'u.username', 'm.imdb_code', 'm.title', 'm.year', 'm.small_cover_image',
+                'h.position', 'h.duration', 'h.completed', 'h.last_watched_at');
+
+        const top = await req.knex('watch_history as h')
+            .join('movies as m', 'm.imdb_code', 'h.imdb_code')
+            .groupBy('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image')
+            .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image')
+            .countDistinct('h.user_id as viewers')
+            .sum('h.watched_seconds as seconds')
+            .orderBy([{ column: 'viewers', order: 'desc' }, { column: 'seconds', order: 'desc' }])
+            .limit(8);
+
+        res.json({
+            recent,
+            top: top.map(movie => ({ ...movie, viewers: toNumber(movie.viewers), seconds: Math.round(toNumber(movie.seconds)) }))
+        });
+    } catch(err) {
+        logger.error('Error fetching activity: ' + errorMessage(err));
+        res.status(500).json({ message: 'Error fetching the activity' });
+    }
+});
+
+async function timed(check) {
+    const started = Date.now();
+    try {
+        const detail = await check();
+        return { ok: true, latency: Date.now() - started, detail: detail || null };
+    } catch (err) {
+        return { ok: false, latency: Date.now() - started, error: errorMessage(err) };
+    }
+}
+
+// Checks every service the server depends on. The mail server is only logged in to, nothing is sent.
+router.get('/health', Authorization, async (req, res) => {
+    const mailCheck = getMailStatus().current ? Promise.resolve() : checkMail();
+
+    const [database, tmdb, yts] = await Promise.all([
+        timed(() => req.knex.raw('select 1')),
+        timed(async () => {
+            if (!process.env.TMDB_API_KEY) throw new Error('TMDB_API_KEY is not set');
+            await req.tmdb.get('/configuration', { timeout: CHECK_TIMEOUT });
+        }),
+        timed(async () => {
+            const response = await axios.get(`${YTS_API_URL}/list_movies.json`, { params: { limit: 1 }, timeout: CHECK_TIMEOUT });
+            if (!response.data || response.data.status !== 'ok') throw new Error('Unexpected answer from the YTS API');
+            return YTS_API_URL;
+        }),
+        mailCheck
+    ]);
+
+    const torrentStats = req.torrentManager ? req.torrentManager.getStats() : null;
+    const torrentClient = req.torrentManager && req.torrentManager.client;
+    const torrents = torrentClient && !torrentClient.destroyed
+        ? { ok: true, detail: `${torrentStats.totalTorrents} of ${torrentStats.maxTorrents} torrents loaded` }
+        : { ok: false, error: 'The torrent client is not running' };
+
+    const mail = getMailStatus();
+
+    res.json({
+        checkedAt: new Date().toISOString(),
+        services: [
+            { id: 'database', name: 'Database', ...database, detail: database.ok ? 'PostgreSQL answers queries' : null },
+            { id: 'mail', name: 'Mail server', ok: !!(mail.current && mail.current.ok), latency: mail.current && mail.current.latency, error: mail.current && mail.current.error, detail: mail.host ? `${mail.host}:${mail.port}` : null, checkedAt: mail.current && mail.current.at },
+            { id: 'tmdb', name: 'TMDB API', ...tmdb, detail: tmdb.ok ? 'Movie lists and metadata' : null },
+            { id: 'yts', name: 'YTS API', ...yts },
+            { id: 'torrents', name: 'Torrent client', ...torrents }
+        ],
+        mail
+    });
+});
+
+router.get('/mail', Authorization, (req, res) => {
+    res.json(getMailStatus());
+});
+
+// Logs in to the mail server right now to see if it works. No email is sent.
+router.post('/mail/check', Authorization, async (req, res) => {
+    await checkMail();
+    res.json(getMailStatus());
 });
 
 router.get("/next-refresh", Authorization, async (req, res) => {
@@ -128,14 +403,74 @@ router.get("/next-refresh", Authorization, async (req, res) => {
     }
 });
 
-router.post("/reset-categories", Authorization, async (req, res) => {
+// Only one refresh at a time, it takes a few minutes and hits TMDB and YTS hard
+let refreshing = null;
+
+router.get('/categories', Authorization, async (req, res) => {
     try {
-        await req.fetchTrendingMovies();
+        const rows = await req.knex('categories').select('id', 'name', 'movies', 'created_at').orderBy('id');
+        const categories = rows.map(row => {
+            const movies = typeof row.movies === 'string' ? JSON.parse(row.movies) : row.movies;
+            return { id: row.id, name: row.name, movies: Array.isArray(movies) ? movies.length : 0, created_at: row.created_at };
+        });
+
+        res.json({
+            categories,
+            refreshedAt: rows.length ? rows[0].created_at : null,
+            nextRefresh: req.nextRefresh ? req.nextRefresh() : null,
+            refreshing: !!refreshing
+        });
+    } catch(err) {
+        res.status(500).json({ message: 'Error fetching categories' });
+    }
+});
+
+router.post("/reset-categories", Authorization, async (req, res) => {
+    if (refreshing) {
+        return res.status(409).json({ message: 'The categories are already being refreshed' });
+    }
+
+    try {
+        logger.info(`${req.user.username} started a manual refresh of the categories`);
+        refreshing = req.fetchTrendingMovies();
+        await refreshing;
 
         res.status(200).json({ message: 'Categories reset' });
     } catch(err) {
         res.status(500).json({ message: 'Error resetting categories', error: err.message || err });
+    } finally {
+        refreshing = null;
     }
+});
+
+router.get('/torrents', Authorization, (req, res) => {
+    if (!req.torrentManager) {
+        return res.status(503).json({ message: 'The torrent client is not running' });
+    }
+    res.json(req.torrentManager.getStats());
+});
+
+// Drops a torrent and its downloaded data. Anyone streaming it is cut off.
+router.delete('/torrents/:hash', Authorization, (req, res) => {
+    if (!req.torrentManager) {
+        return res.status(503).json({ message: 'The torrent client is not running' });
+    }
+
+    let hash;
+    try {
+        hash = TorrentManager.normalizeHash(req.params.hash);
+    } catch (err) {
+        return res.status(400).json({ message: 'Invalid torrent hash' });
+    }
+
+    const entry = req.torrentManager.entries.get(hash);
+    if (!entry) {
+        return res.status(404).json({ message: 'Torrent not found' });
+    }
+
+    logger.info(`${req.user.username} removed the torrent "${entry.name}"`);
+    req.torrentManager.remove(hash);
+    res.json({ message: 'Torrent removed' });
 });
 
 router.post("/shutdown", Authorization, async (req, res) => {
@@ -146,21 +481,6 @@ router.post("/shutdown", Authorization, async (req, res) => {
     } catch (err) {
         res.status(500).json({ message: 'Error shutting down server', error: err.message || err });
         logger.log('Error shutting down server', err);
-    }
-});
-
-router.delete('/user/:id', Authorization, async (req, res) => {
-    const id = req.params.id;
-
-    if(!id) {
-        return res.status(400).send('User ID not found');
-    }
-
-    try {
-        await req.knex('users').where({ id }).delete();
-        res.status(200).send('User deleted');
-    } catch(err) {
-        res.status(500).send('Error deleting user');
     }
 });
 
@@ -183,16 +503,16 @@ router.get('/check-invite', (req, res) => {
     }
 })
 
+// Creates an invitation link and emails it, unless `send` is false. The link is always returned,
+// so it can be shared by hand when the mail server is down.
 router.post('/invite', Authorization, async (req, res) => {
-    const { email } = req.body;
+    const { email, send = true } = req.body;
 
     if(!email) {
-        return res.status(400).send('Email is required');
+        return res.status(400).json({ message: 'Email is required' });
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!emailRegex.test(email)) {
+    if (!EMAIL_REGEX.test(email)) {
         return res.status(400).json({ message: 'Invalid email' });
     }
 
@@ -204,13 +524,22 @@ router.post('/invite', Authorization, async (req, res) => {
     const token = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1d' });
 
     const URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const link = `${URL}/register/${token}`;
+    const inviter = escapeHtml(req.user.username);
+
+    await req.knex('access_requests').where({ email }).update({ invited_at: new Date() }).catch(() => {});
+
+    if (!send) {
+        logger.info(`${req.user.username} created an invitation link for ${email}`);
+        return res.status(200).json({ message: 'Invitation link created. It works for 24 hours.', link });
+    }
 
     // Send email using nodemailer
     const mailOptions = {
         from: process.env.EMAIL_USER,
         to: email,
         subject: 'Invitation to join Streamify',
-        text: `Please accept the invitation from ${req.user.username} and join our platform. Open this link ${URL}/register/${token}`,
+        text: `Please accept the invitation from ${req.user.username} and join our platform. Open this link ${link}`,
         html: `
             <div style="font-family: Arial, sans-serif; line-height: 1.6;">
                 <h2 style="color: #333;">You're Invited to Join Streamify!</h2>
@@ -218,19 +547,19 @@ router.post('/invite', Authorization, async (req, res) => {
                     Hello,
                 </p>
                 <p>
-                    You have been invited by <strong>${req.user.username}</strong> to join our platform. We are excited to have you on board!
+                    You have been invited by <strong>${inviter}</strong> to join our platform. We are excited to have you on board!
                 </p>
                 <p>
                     Please click the button below to accept the invitation and complete your registration.
                 </p>
                 <p style="text-align: center;">
-                    <a href="${URL}/register/${token}" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Join Streamify</a>
+                    <a href="${link}" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Join Streamify</a>
                 </p>
                 <p>
                     If the button above does not work, please copy and paste the following link into your web browser:
                 </p>
                 <p>
-                    <a href="${URL}/register/${token}">${URL}/register/${token}</a>
+                    <a href="${link}">${link}</a>
                 </p>
                 <p>
                     Best regards,<br>
@@ -240,13 +569,14 @@ router.post('/invite', Authorization, async (req, res) => {
         `
     };
 
-    transporter.sendMail(mailOptions, (error, info) => {
-        if(error){
-            logger.error(error);
-            return res.status(500).json({ message: 'Error sending email' });
-        }
-        return res.status(200).json({ message: 'Email sent' });
-    });
+    try {
+        await sendMail(mailOptions);
+        logger.info(`${req.user.username} invited ${email}`);
+        return res.status(200).json({ message: 'Email sent', link });
+    } catch(error) {
+        logger.error(`Error sending the invitation to ${email}: ${errorMessage(error)}`);
+        return res.status(502).json({ message: 'The email could not be sent. You can copy the link and send it yourself.', link });
+    }
 });
 
 router.post("/request-access", async (req, res) => {
@@ -256,9 +586,7 @@ router.post("/request-access", async (req, res) => {
         return res.status(400).send('Email is required');
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!emailRegex.test(email)) {
+    if (!EMAIL_REGEX.test(email)) {
         return res.status(400).json({ message: 'Invalid email' });
     }
 
@@ -269,6 +597,18 @@ router.post("/request-access", async (req, res) => {
         logger.warn("No admin user found. Please create an admin account.");
         return res.status(503).json({ message: 'Requests are not accepted yet. Please try again later.' });
     }
+
+    // Saved first, so the request shows up in the admin panel even when the email below fails
+    try {
+        await req.knex('access_requests')
+            .insert({ email, created_at: new Date() })
+            .onConflict('email')
+            .merge({ created_at: new Date(), invited_at: null });
+    } catch(err) {
+        logger.error('Error saving the access request: ' + errorMessage(err));
+    }
+
+    const safeEmail = escapeHtml(email);
 
     // Send email using nodemailer
     const mailOptions = {
@@ -286,7 +626,7 @@ router.post("/request-access", async (req, res) => {
                     To accept the the request click on the button below and invite the user with this email:
                 </p>
                 <p>
-                    <strong>${email}</strong>
+                    <strong>${safeEmail}</strong>
                 </p>
                 <p style="text-align: center;">
                     <a href="${URL}/admin/panel" style="display: inline-block; padding: 10px 20px; font-size: 16px; color: #fff; background-color: #007bff; text-decoration: none; border-radius: 5px;">Open Admin</a>
@@ -299,14 +639,34 @@ router.post("/request-access", async (req, res) => {
         `
     };
 
-    transporter.sendMail(mailOptions, (error, info) => {
-        if(error){
-            logger.error(error);
-            return res.status(500).json({ message : 'Error sending email' });
-        }
+    try {
+        await sendMail(mailOptions);
+    } catch(error) {
+        // The request is saved, the admin still sees it in the panel
+        logger.error(`Error emailing the access request of ${email}: ${errorMessage(error)}`);
+    }
 
-        return res.status(200).json({ message: "Email sent! Please, don't send multiple times!" });
-    });
+    return res.status(200).json({ message: "Request sent! Please, don't send multiple times!" });
+});
+
+router.get('/requests', Authorization, async (req, res) => {
+    try {
+        const requests = await req.knex('access_requests')
+            .select('id', 'email', 'invited_at', 'created_at')
+            .orderByRaw('invited_at is not null, created_at desc');
+        res.json({ requests });
+    } catch(err) {
+        res.status(500).json({ message: 'Error fetching the access requests' });
+    }
+});
+
+router.delete('/requests/:id', Authorization, async (req, res) => {
+    try {
+        await req.knex('access_requests').where({ id: req.params.id }).del();
+        res.json({ message: 'Request dismissed' });
+    } catch(err) {
+        res.status(500).json({ message: 'Error dismissing the request' });
+    }
 });
 
 router.get("/logs", Authorization, async (req, res) => {

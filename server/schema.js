@@ -51,6 +51,13 @@ const schemaDefinition = {
     user_id: { type: 'integer', notNullable: true, references: 'users.id', onDelete: 'CASCADE' },
     imdb_code: { type: 'string', notNullable: true },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // People who asked to join. Kept here so a request isn't lost when the email to the admin fails.
+  access_requests: {
+    id: { type: 'increments', primary: true },
+    email: { type: 'string', unique: true, notNullable: true },
+    invited_at: { type: 'timestamp', notNullable: false },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   }
 };
 

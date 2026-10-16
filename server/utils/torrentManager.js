@@ -348,10 +348,19 @@ class TorrentManager {
             progress: entry.torrent.progress,
             downloadSpeed: entry.torrent.downloadSpeed,
             uploadSpeed: entry.torrent.uploadSpeed,
+            downloaded: entry.torrent.downloaded,
+            uploaded: entry.torrent.uploaded,
+            size: entry.torrent.length || 0,
+            addedAt: entry.addedAt,
             idleFor: entry.streams === 0 ? Date.now() - entry.lastActivity : 0
         }));
 
         return {
+            maxTorrents: this.maxTorrents,
+            idleTimeout: this.idleTimeout,
+            downloadPath: this.downloadPath,
+            downloadSpeed: torrents.reduce((total, torrent) => total + torrent.downloadSpeed, 0),
+            uploadSpeed: torrents.reduce((total, torrent) => total + torrent.uploadSpeed, 0),
             totalTorrents: torrents.length,
             torrentsWithReferences: torrents.filter(torrent => torrent.streams > 0).length,
             idleTorrents: torrents.filter(torrent => torrent.streams === 0).length,

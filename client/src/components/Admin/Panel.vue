@@ -1,644 +1,582 @@
 <template>
-    <div class="admin-panel">
-        <h1>Admin Panel</h1>
+    <div class="admin">
+        <header class="topbar">
+            <div class="brand">
+                <span class="wordmark">Streamify</span>
+                <span class="badge">Admin</span>
+            </div>
 
-        <button @click="shutdown" class="shutdown">Shutdown</button>
-
-        <div class="stats">
-            <h2>Stats</h2>
-            <div v-if="stats">
-                <div>
-                    <h3>General</h3>
-                    <p>Total Users: {{ stats.users.count }}</p>
-                    <p>Total Movies: {{ stats.movies.count }}</p>
-                    <p>Total Categories: {{ stats.categories.count }}</p>
+            <div class="topbar-end">
+                <button
+                    type="button"
+                    class="status"
+                    :class="overall.level"
+                    :title="overall.title"
+                    @click="openTab('system')"
+                >
+                    <span class="dot" :class="overall.level"></span>
+                    <span class="status-text">{{ overall.label }}</span>
+                </button>
+                <router-link to="/" class="btn small ghost site-link">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
+                    <span>Open site</span>
+                </router-link>
+                <div class="me" v-if="me">
+                    <ProfileAvatar :name="me.username" :size="32" />
+                    <span class="me-name">{{ me.username }}</span>
                 </div>
-                <div>
-                    <h3>Torrents</h3>
-                    <p>Total Torrents: {{ stats.torrents.totalTorrents }}</p>
-                    <p>Torrents with References: {{ stats.torrents.torrentsWithReferences }}</p>
-                    <p>Idle Torrents: {{ stats.torrents.idleTorrents }}</p>
+                <button type="button" class="btn small" @click="logout">Log out</button>
+            </div>
+        </header>
+
+        <div class="layout">
+            <nav class="sidebar" aria-label="Admin sections">
+                <button
+                    v-for="item in nav"
+                    :key="item.id"
+                    type="button"
+                    class="nav-item"
+                    :class="{ active: tab === item.id }"
+                    :aria-current="tab === item.id ? 'page' : null"
+                    @click="openTab(item.id)"
+                >
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
+                    <span>{{ item.label }}</span>
+                    <span v-if="item.badge" class="nav-badge" :class="item.badgeLevel">{{ item.badge }}</span>
+                </button>
+            </nav>
+
+            <main class="content">
+                <OverviewTab
+                    v-if="tab === 'overview'"
+                    :stats="stats"
+                    :services="services"
+                    :logs="logs"
+                    @open="openTab"
+                />
+                <UsersTab v-else-if="tab === 'users'" :me="me" :mail-ok="mailOk" @changed="loadStats" />
+                <RequestsTab v-else-if="tab === 'requests'" :mail-ok="mailOk" @changed="loadStats" />
+                <ContentTab v-else-if="tab === 'content'" :stats="stats" @changed="loadStats" />
+                <SystemTab
+                    v-else-if="tab === 'system'"
+                    :stats="stats"
+                    :health="health"
+                    :checking="checkingHealth"
+                    @recheck="loadHealth"
+                    @mail="onMailStatus"
+                />
+                <LogsTab v-else-if="tab === 'logs'" :logs="logs" :connection="logConnection" @clear="logs = []" />
+            </main>
+        </div>
+
+        <div v-if="dialog" class="admin-dialog" @click.self="closeDialog(false)" @keydown.esc="closeDialog(false)">
+            <div class="card" role="alertdialog" aria-modal="true" :aria-label="dialog.title">
+                <div class="card-head"><h3>{{ dialog.title }}</h3></div>
+                <p class="confirm-text">{{ dialog.message }}</p>
+                <div class="actions dialog-actions">
+                    <button type="button" class="btn" @click="closeDialog(false)">Cancel</button>
+                    <button
+                        ref="confirmButton"
+                        type="button"
+                        class="btn"
+                        :class="dialog.danger ? 'danger' : 'primary'"
+                        @click="closeDialog(true)"
+                    >{{ dialog.confirmLabel }}</button>
                 </div>
             </div>
-            <LoadingSpinner v-else :size="40" label="Loading stats" />
-        </div>
-        <div class="categories">
-            <h2>Categories</h2>
-            <div class="next-reset">Next Reset: <span v-if="nextReset">{{ nextReset }}</span><LoadingSpinner v-else :size="18" label="Loading the next reset" /></div>
-            <div>
-                <button @click="resetCategories">Manual Reset</button>
-                <LoadingSpinner v-if="resettingCategories" :size="28" label="Resetting the categories" />
-                <p v-else-if="resetCategoriesStatus">{{ resetCategoriesStatus }}</p>
-            </div>
-        </div>
-        <div class="users">
-            <h2>Users</h2>
-            <button class="invite" @click="showModal = true">+ Invite</button>
-            <table v-if="users.length">
-                <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Username</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Created At</th>
-                </tr>
-                </thead>
-                <tbody>
-                    <template v-for="user in users" :key="user.id">
-                        <tr @click="toggleExpandUser(user.id)" :class="{ 'expanded': expandedUsers.includes(user.id) }">
-                            <td>{{ user.id }}</td>
-                            <td>{{ user.username }}</td>
-                            <td>{{ user.email }}</td>
-                            <td>{{ user.role }}</td>
-                            <td>{{ new Date(user.created_at).toLocaleString() }}</td>
-                        </tr>
-                        <tr v-if="expandedUsers.includes(user.id)" class="expanded-row">
-                            <td colspan="5">
-                                <button @click="deleteUser(user.id)" class="delete-user">Delete User</button>
-                            </td>
-                        </tr>
-                    </template>
-                    <tr v-if="!users.length">
-                        <td colspan="5">No users found</td>
-                    </tr>
-                </tbody>
-            </table>
         </div>
 
-        <div>
-            <h2>Logs</h2>
-            <div class="logs-container" ref="logsContainer">
-                <div v-if="logs && logs.length" class="logs">
-                    <div 
-                        v-for="(log, index) in logs" 
-                        :key="index" 
-                        class="log-entry"
-                        :class="log.level"
-                    >
-                        <div class="log-timestamp">{{ formatTimestamp(log.timestamp) }}</div>
-                        <div class="log-level">[{{ log.level.toUpperCase() }}]</div>
-                        <div class="log-message">{{ log.message }}</div>
-                    </div>
-                </div>
-                <div v-else class="no-logs">
-                    <p>No logs available</p>
-                </div>
+        <div class="toasts" aria-live="polite">
+            <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.type">
+                <span class="dot" :class="toast.type"></span>
+                <span>{{ toast.message }}</span>
             </div>
-        </div>
-    </div>
-
-    <div class="modal" v-if="showModal" @click.self="showModal = false">
-        <div class="modal-content">
-            <button class="closeButton" v-on:click="showModal = false">
-                <svg class="closeSvg" viewBox="0 0 122.878 122.88" enable-background="new 0 0 122.878 122.88"><g><path d="M1.426,8.313c-1.901-1.901-1.901-4.984,0-6.886c1.901-1.902,4.984-1.902,6.886,0l53.127,53.127l53.127-53.127 c1.901-1.902,4.984-1.902,6.887,0c1.901,1.901,1.901,4.985,0,6.886L68.324,61.439l53.128,53.128c1.901,1.901,1.901,4.984,0,6.886 c-1.902,1.902-4.985,1.902-6.887,0L61.438,68.326L8.312,121.453c-1.901,1.902-4.984,1.902-6.886,0 c-1.901-1.901-1.901-4.984,0-6.886l53.127-53.128L1.426,8.313L1.426,8.313z"/></g></svg>
-            </button>
-            <h2>Invite User</h2>
-            <p class="inviteInfo">Send an invitation to a new user.</p>
-            <input type="email" v-model="inviteEmail" placeholder="Email" />
-            <p v-if="inviteError" style="color: red;">{{ inviteError }}</p>
-            <p v-if="inviteSuccess" style="color: green;">{{ inviteSuccess }}</p>
-            <button class="inviteButton" @click="inviteUser">Send Invite</button>
         </div>
     </div>
 </template>
 
 <script>
-import axios from 'axios';
-import LoadingSpinner from '../LoadingSpinner.vue';
+import api from '../../api';
+import { API_URL } from '../../config';
+import { session } from '../../session';
+import ProfileAvatar from '../ProfileAvatar.vue';
+import OverviewTab from './OverviewTab.vue';
+import UsersTab from './UsersTab.vue';
+import RequestsTab from './RequestsTab.vue';
+import ContentTab from './ContentTab.vue';
+import SystemTab from './SystemTab.vue';
+import LogsTab from './LogsTab.vue';
+import './admin.css';
 
-const URL = process.env.VUE_APP_BACKEND_URL || 'http://localhost:8080';
+const TABS = ['overview', 'users', 'requests', 'content', 'system', 'logs'];
+const STATS_INTERVAL = 10 * 1000;
+const HEALTH_INTERVAL = 5 * 60 * 1000;
+const MAX_LOGS = 1000;
 
 export default {
     name: 'AdminPanel',
     components: {
-        LoadingSpinner
+        ProfileAvatar,
+        OverviewTab,
+        UsersTab,
+        RequestsTab,
+        ContentTab,
+        SystemTab,
+        LogsTab
+    },
+    provide() {
+        return {
+            confirmAction: this.confirmAction,
+            notify: this.notify
+        };
     },
     data() {
         return {
-            users: [],
-            showModal: false,
-            inviteEmail: '',
-            inviteError: '',
-            inviteSuccess: '',
             stats: null,
-            nextReset: '',
-            nextResetInterval: null,
-            resetCategoriesStatus: '',
-            resettingCategories: false,
+            health: null,
+            checkingHealth: false,
             logs: [],
-            expandedUsers: [],
+            logConnection: 'connecting',
+            dialog: null,
+            toasts: [],
+            timers: [],
+            socket: null,
+            closed: false
         };
     },
-    async mounted() {
-        this.getStats();
-
-        try {
-            const response = await axios.get(URL+'/admin/next-refresh', {
-                headers: {
-                    Authorization: localStorage.getItem('token')
-                }
+    computed: {
+        me() {
+            return session.user;
+        },
+        tab() {
+            return TABS.includes(this.$route.query.tab) ? this.$route.query.tab : 'overview';
+        },
+        // The health check, with the mail result swapped for the newer one from the stats
+        services() {
+            if (!this.health) return [];
+            const mail = this.stats && this.stats.mail && this.stats.mail.current;
+            return this.health.services.map(service => {
+                if (service.id !== 'mail' || !mail) return service;
+                return { ...service, ok: mail.ok, error: mail.error, latency: mail.latency, checkedAt: mail.at };
             });
-
-            this.nextResetInterval = response.data.date;
-
-            setInterval(() => {
-                const now = new Date();
-                const nextReset = new Date(this.nextResetInterval);
-                const diff = nextReset - now;
-                const days = Math.floor(diff / 1000 / 60 / 60 / 24);
-                const hours = Math.floor(diff / 1000 / 60 / 60 % 24);
-                const minutes = Math.floor(diff / 1000 / 60 % 60);
-                const seconds = Math.floor(diff / 1000 % 60);
-                this.nextReset = `${days}d ${hours}h ${minutes}m ${seconds}s`;
-            }, 1000);
-        } catch(error) {
-            console.error('Error fetching categories:', error);
-        }
-
-        const token = localStorage.getItem('token');
-        if (!token) {
-            this.$router.push('/admin/auth');
-        } else {
-            try {
-                const response = await axios.get(URL + '/admin/me', {
-                    headers: {
-                        Authorization: token
-                    }
-                });
-
-                if(!response.data.user) {
-                    this.$router.push('/admin/auth');
-                }
-            } catch (error) {
-                this.$router.push('/admin/auth');
+        },
+        mailOk() {
+            const mail = this.stats && this.stats.mail && this.stats.mail.current;
+            return mail ? mail.ok : null;
+        },
+        overall() {
+            if (!this.services.length) {
+                return { level: '', label: 'Checking…', title: 'Checking the services' };
             }
+            const down = this.services.filter(service => !service.ok);
+            if (!down.length) {
+                return { level: 'ok', label: 'All systems normal', title: 'Every service answers' };
+            }
+            const names = down.map(service => service.name);
+            return {
+                level: 'bad',
+                label: down.length === 1 ? `${names[0]} down` : `${down.length} services down`,
+                title: `Not working: ${names.join(', ')}`
+            };
+        },
+        nav() {
+            const pending = this.stats ? this.stats.requests.pending : 0;
+            const errors = this.logs.filter(log => log.level === 'error').length;
+            const down = this.services.filter(service => !service.ok).length;
+            return [
+                { id: 'overview', label: 'Overview', icon: 'M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z' },
+                { id: 'users', label: 'Users', icon: 'M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM21 19v-1a4 4 0 0 0-3-3.85M15.5 3.15a3.5 3.5 0 0 1 0 6.7' },
+                { id: 'requests', label: 'Requests', icon: 'M4 6h16v12H4zM4 7l8 6 8-6', badge: pending || null, badgeLevel: 'accent' },
+                { id: 'content', label: 'Content', icon: 'M4 5h16v14H4zM4 9h16M9 5v4M15 5v4M10 12.5v4l3.5-2z' },
+                { id: 'system', label: 'System', icon: 'M12 3v3M12 18v3M4.2 7.5l2.6 1.5M17.2 15l2.6 1.5M4.2 16.5 6.8 15M17.2 9l2.6-1.5M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z', badge: down || null, badgeLevel: 'bad' },
+                { id: 'logs', label: 'Logs', icon: 'M5 4h14v16H5zM9 9h6M9 13h6M9 17h3', badge: errors || null, badgeLevel: 'bad' }
+            ];
         }
-        this.fetchUsers();
+    },
+    mounted() {
+        this.loadStats();
+        this.loadHealth();
+        this.connectLogs();
 
-        this.connectToLogWS(localStorage.getItem('token'));
-
-        // setInterval(() => {
-        //     this.getLogs();
-        // }, 1000);
+        this.timers.push(setInterval(() => {
+            if (!document.hidden) this.loadStats();
+        }, STATS_INTERVAL));
+        this.timers.push(setInterval(() => {
+            if (!document.hidden) this.loadHealth();
+        }, HEALTH_INTERVAL));
+    },
+    beforeUnmount() {
+        this.closed = true;
+        this.timers.forEach(clearInterval);
+        if (this.socket) this.socket.close();
     },
     methods: {
-        async fetchUsers() {
-            try {
-                const response = await axios.get(URL+'/admin/users', {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
-                this.users = response.data;
-            } catch (error) {
-                console.error('Error fetching users:', error);
-            }
+        openTab(id) {
+            if (id === this.tab) return;
+            this.$router.replace({ query: id === 'overview' ? {} : { tab: id } });
         },
-        async inviteUser() {
+        async loadStats() {
             try {
-                const response = await axios.post(URL+'/admin/invite', {
-                    email: this.inviteEmail
-                }, {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
-                this.inviteSuccess = response.data.message;
-                this.inviteError = '';
-            } catch (error) {
-                this.inviteError = error.response.data.message || error.response.data || 'An error occurred';
-                this.inviteSuccess = '';
-                console.error('Error inviting user:', error);
-            }
-        },
-        async getStats() {
-            try {
-                const response = await axios.get(URL+'/admin/stats', {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
+                const response = await api.get('/admin/stats');
                 this.stats = response.data;
             } catch (error) {
-                console.error('Error fetching stats:', error);
+                this.handleAuthError(error);
             }
         },
-        async resetCategories() {
-            if(!confirm('Are you sure you want to reset all categories?')) {
-                return;
-            }
-
+        async loadHealth() {
+            if (this.checkingHealth) return;
+            this.checkingHealth = true;
             try {
-                this.resettingCategories = true;
-                this.resetCategoriesStatus = '';
-                const response = await axios.post(URL+'/admin/reset-categories', {}, {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
-                this.resetCategoriesStatus = response.data.message || 'Categories reset successfully';
-                this.getStats();
+                const response = await api.get('/admin/health');
+                this.health = response.data;
             } catch (error) {
-                this.resetCategoriesStatus = (error.response && (error.response.data.message || error.response.data)) || 'An error occurred';
-                console.error('Error resetting categories:', error);
+                this.handleAuthError(error);
             } finally {
-                this.resettingCategories = false;
+                this.checkingHealth = false;
             }
         },
-        async getLogs() {
-            try {
-                const response = await axios.get(URL+'/admin/logs', {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
-                this.logs = response.data.logs;
-                this.$nextTick(() => {
-                    this.scrollToBottom();
-                });
-            } catch (error) {
-                console.error('Error fetching logs:', error);
+        // The system tab checked the mail server itself, keep everything else in step
+        onMailStatus(mail) {
+            if (this.stats) {
+                this.stats = { ...this.stats, mail: { ...this.stats.mail, current: mail.current, uptime: mail.uptime, checking: mail.checking } };
+            }
+            if (this.health) {
+                this.health = { ...this.health, mail };
             }
         },
-        connectToLogWS(token) {
-            const wsProtocol = URL.startsWith('https') ? 'wss' : 'ws';
-            const wsUrl = URL.replace(/^https?:\/\//, '');
-            const ws = new WebSocket(`${wsProtocol}://${wsUrl}/admin/logs-ws?token=${token}`);
-            
-            ws.onopen = () => {
-                console.log('Connected to WebSocket for logs');
+        // The account lost its admin role: reload the session so the router sees that, then leave
+        async handleAuthError(error) {
+            if (error.response && error.response.status === 403) {
+                await session.login(session.token).catch(() => {});
+                this.$router.replace('/admin/auth');
+            }
+        },
+        connectLogs() {
+            const token = session.token;
+            if (!token || this.closed) return;
+
+            const wsUrl = API_URL.replace(/^http/, 'ws');
+            const socket = new WebSocket(`${wsUrl}/admin/logs-ws?token=${encodeURIComponent(token)}`);
+            this.socket = socket;
+            this.logConnection = 'connecting';
+
+            socket.onopen = () => {
+                this.logConnection = 'live';
             };
-            
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                
+
+            socket.onmessage = (event) => {
+                let data;
+                try {
+                    data = JSON.parse(event.data);
+                } catch (err) {
+                    return;
+                }
+
                 if (data.type === 'initialLogs') {
-                    console.log('Received initial logs', data.logs);
-                    this.logs = data.logs;
+                    this.logs = data.logs.slice(-MAX_LOGS);
                 } else if (data.type === 'newLog') {
                     this.logs.push(data.log);
-                } else if (data.type === 'error') {
-                    console.error('WebSocket error:', data.message);
+                    if (this.logs.length > MAX_LOGS) this.logs.splice(0, this.logs.length - MAX_LOGS);
                 }
             };
-            
-            ws.onclose = () => {
-                console.log('Logs WebSocket connection closed');
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-            
-            return ws;
-        },
-        scrollToBottom() {
-            if (this.$refs.logsContainer) {
-                this.$refs.logsContainer.scrollTop = this.$refs.logsContainer.scrollHeight;
-            }
-        },
-        async shutdown() {
-            if(!confirm('Are you sure you want to shutdown the server?')) {
-                return;
-            }
 
-            try {
-                await axios.post(URL+'/admin/shutdown', {}, {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
-            } catch (error) {
-                console.error('Error shutting down server:', error);
-            }
+            // Reconnect when the server restarts or the connection drops
+            socket.onclose = () => {
+                if (this.closed) return;
+                this.logConnection = 'offline';
+                setTimeout(() => this.connectLogs(), 5000);
+            };
         },
-        formatTimestamp(timestamp) {
-            const date = new Date(timestamp);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + 
-                   ' ' + date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        logout() {
+            session.logout();
+            this.$router.push('/admin/auth');
         },
-        toggleExpandUser(userId) {
-            const index = this.expandedUsers.indexOf(userId);
-            if (index === -1) {
-                this.expandedUsers.push(userId);
-            } else {
-                this.expandedUsers.splice(index, 1);
-            }
+        confirmAction({ title, message, confirmLabel = 'Confirm', danger = false }) {
+            return new Promise((resolve) => {
+                this.dialog = { title, message, confirmLabel, danger, resolve };
+                this.$nextTick(() => this.$refs.confirmButton && this.$refs.confirmButton.focus());
+            });
         },
-        async deleteUser(userId) {
-            const user = this.users.find(u => u.id === userId);
-            if (!user || !confirm(`Are you sure you want to delete this user ${user.username}?`)) {
-                return;
-            }
-            
-            try {
-                await axios.delete(`${URL}/admin/user/${userId}`, {
-                    headers: {
-                        Authorization: localStorage.getItem('token')
-                    }
-                });
-                this.fetchUsers();
-                this.expandedUsers = this.expandedUsers.filter(id => id !== userId);
-            } catch (error) {
-                console.error('Error deleting user:', error);
-                alert('Failed to delete user');
-            }
+        closeDialog(result) {
+            if (!this.dialog) return;
+            this.dialog.resolve(result);
+            this.dialog = null;
         },
+        notify(message, type = 'ok') {
+            const id = Date.now() + Math.random();
+            this.toasts.push({ id, message, type });
+            setTimeout(() => {
+                this.toasts = this.toasts.filter(toast => toast.id !== id);
+            }, type === 'bad' ? 7000 : 4000);
+        }
     }
 };
 </script>
 
 <style scoped>
-.admin-panel {
-    padding: 20px;
+.admin {
+    min-height: 100vh;
 }
 
-.admin-panel h1 {
-    margin-bottom: 20px;
-}
-
-.shutdown {
-    background-color: red;
-    color: white;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s ease;
-    margin-bottom: 20px;
-}
-
-.shutdown:hover {
-    background-color: darkred;
-}
-
-.next-reset {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 16px 0;
-}
-
-.next-reset .spinner {
-    padding: 0;
-}
-
-.stats > .spinner {
-    justify-content: center;
-}
-
-.stats > div {
-    display: flex;
-    justify-content: start;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 20px;
-}
-
-.stats > div > div {
-    background-color: #222;
-    padding: 10px 20px;
-    border-radius: 12px;
-    border: 2px solid #ddd;
-}
-
-.stats p {
-    width: fit-content;
-}
-
-.categories button {
-    background-color: #2196F3;
-    color: white;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s ease;
-    margin-top: 10px;
-}
-
-.categories button:hover {
-    background-color: #1976D2;
-}
-
-.admin-panel ul {
-    list-style-type: none;
-    padding: 0;
-}
-
-.admin-panel li {
-    margin: 5px 0;
-}
-
-.admin-panel table {
-    width: 100%;
-    margin-bottom: 20px;
-    border-spacing: 0;
-    border-radius: 12px;
-    border-collapse: separate;
-    overflow: hidden;
-    border: 1px solid #ddd;
-}
-
-.admin-panel th, .admin-panel td {
-    padding: 12px;
-    text-align: left;
-    border: 1px solid #ddd;
-}
-
-.admin-panel th {
-    background-color: #222;
-    font-weight: bold;
-}
-
-.admin-panel tr:nth-child(even) {
-    background-color: #111111;
-}
-
-.admin-panel tr:hover {
-    background-color: #111111;
-}
-
-.invite {
-    background-color: #4CAF50;
-    color: white;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 16px;
-    transition: background-color 0.3s ease;
-    margin-bottom: 12px;
-}
-
-.invite:hover {
-    background-color: #45a049;
-}
-
-.closeButton {
-    position: absolute;
-    width: 48px;
-    height: 48px;
-    margin: 0px;
-    border-radius: 24px;
-    border: none;
-    background-color: rgba(0, 0, 0, 0.363);
-    align-content: center;
-    cursor: pointer;
-}
-
-.closeSvg {
-    width: 20px;
-    height: 20px;
-    margin: auto;
-    align-self: center;
-    margin-top: 3px;
-    fill: rgb(238, 238, 238);
-}
-
-.modal {
-    position: fixed;
+.topbar {
+    position: sticky;
     top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
-    z-index: 1000;
+    z-index: 20;
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    height: 64px;
+    padding: 0 var(--gutter);
+    border-bottom: 1px solid var(--card-line);
+    background: rgba(8, 9, 18, 0.78);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
 }
 
-.modal-content {
-    background-color: #222;
-    padding: 20px;
-    border-radius: 12px;
-    position: relative;
-    width: 400px;
-}
-
-.modal h2 {
-    text-align: center;
-    margin-top: 12px;
-}
-
-.modal input {
-    width: calc(100% - 24px);
-    padding: 12px;
-    margin: 12px 0;
-    border-radius: 6px;
-    border: 1px solid #333;
-}
-
-.inviteInfo {
-    margin-top: 48px;
-    margin-bottom: 0;
-}
-
-.inviteButton {
-    width: 100%;
-    padding: 12px;
-    margin: 12px 0;
-    border-radius: 6px;
-    border: none;
-    background-color: #333;
-    color: white;
-    cursor: pointer;
-}
-
-.logs-container {
-    background-color: #1a1a1a;
-    border-radius: 6px;
-    border: 1px solid #333;
-    max-height: 500px;
-    overflow-y: auto;
-    margin-top: 10px;
-    font-family: monospace;
-}
-
-.logs {
-    padding: 10px;
-}
-
-.log-entry {
+.brand {
     display: flex;
-    padding: 6px 10px;
-    border-bottom: 1px solid #333;
-    align-items: flex-start;
-    line-height: 1.4;
-    font-size: 0.9rem;
+    align-items: center;
+    gap: 10px;
+    flex: none;
 }
 
-.log-entry:last-child {
-    border-bottom: none;
+.wordmark {
+    font-size: 1.25rem;
+    font-weight: 800;
+    font-stretch: 120%;
+    letter-spacing: -0.02em;
 }
 
-.log-timestamp {
-    color: #888;
-    margin-right: 8px;
+.badge {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(233, 195, 123, 0.14);
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.topbar-end {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.status {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid var(--card-line);
+    border-radius: 17px;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.status.ok {
+    color: var(--ok);
+    border-color: rgba(111, 211, 160, 0.25);
+}
+
+.status.bad {
+    color: var(--bad);
+    border-color: rgba(239, 122, 114, 0.4);
+    background: rgba(239, 122, 114, 0.08);
+}
+
+.status-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.log-level {
-    font-weight: bold;
-    margin-right: 8px;
-    min-width: 50px;
+.me {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 6px;
 }
 
-.log-message {
-    flex: 1;
-    word-break: break-word;
+.me-name {
+    font-weight: 600;
+    font-size: 0.92rem;
 }
 
-.log-entry.info .log-level {
-    color: #2196F3;
+.layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 32px;
+    padding: 28px var(--gutter) 64px;
+    max-width: 1480px;
+    margin: 0 auto;
 }
 
-.log-entry.log .log-level {
-    color: #4CAF50;
+.sidebar {
+    position: sticky;
+    top: 92px;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
-.log-entry.warn .log-level {
-    color: #FF9800;
-}
-
-.log-entry.error .log-level {
-    color: #F44336;
-}
-
-.no-logs {
-    padding: 20px;
-    text-align: center;
-    color: #888;
-}
-
-.expanded {
-    background-color: #2a2a2a !important;
-}
-
-.expanded-row {
-    background-color: #2a2a2a;
-}
-
-.expanded-row td {
-    padding: 0 12px 12px 12px !important;
-}
-
-.delete-user {
-    background-color: #dc3545;
-    color: white;
-    padding: 8px 16px;
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 42px;
+    padding: 0 14px;
     border: none;
-    border-radius: 4px;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-align: left;
     cursor: pointer;
-    transition: background-color 0.3s;
-    margin: 8px 0;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.delete-user:hover {
-    background-color: #c82333;
+.nav-item svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+}
+
+.nav-item:hover {
+    background: var(--surface);
+    color: var(--text);
+}
+
+.nav-item.active {
+    background: var(--surface-strong);
+    color: var(--text);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-badge {
+    margin-left: auto;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.nav-badge.accent {
+    background: var(--accent);
+    color: #1a1406;
+}
+
+.nav-badge.bad {
+    background: rgba(239, 122, 114, 0.2);
+    color: var(--bad);
+}
+
+.content {
+    min-width: 0;
+}
+
+.dialog-actions {
+    justify-content: flex-end;
+}
+
+.toasts {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid var(--card-line);
+    border-radius: 12px;
+    background: #171a28;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    font-size: 0.92rem;
+    animation: toast-in 0.2s ease;
+}
+
+.toast.bad {
+    border-color: rgba(239, 122, 114, 0.4);
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+}
+
+@media (max-width: 960px) {
+    .layout {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 20px;
+        padding-top: 16px;
+    }
+
+    .sidebar {
+        position: static;
+        flex-direction: row;
+        overflow-x: auto;
+        margin: 0 calc(var(--gutter) * -1);
+        padding: 0 var(--gutter) 4px;
+        scrollbar-width: none;
+    }
+
+    .nav-item {
+        flex: none;
+        height: 38px;
+    }
+
+    .nav-item.active {
+        box-shadow: inset 0 -2px 0 var(--accent);
+    }
+
+    .me-name,
+    .site-link span {
+        display: none;
+    }
+}
+
+@media (max-width: 560px) {
+    .wordmark {
+        font-size: 1.05rem;
+    }
+
+    .me {
+        display: none;
+    }
+
+    .status {
+        padding: 0 11px;
+    }
+
+    .status-text {
+        max-width: 110px;
+    }
 }
 </style>

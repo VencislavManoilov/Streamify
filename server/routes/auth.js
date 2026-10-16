@@ -41,6 +41,9 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ message: 'Error registering user' });
     }
 
+    // Their access request is answered now
+    await req.knex('access_requests').where({ email }).del().catch(() => {});
+
     try {
         res.status(200).json({ token: signSessionToken(user.email) });
     } catch(err) {

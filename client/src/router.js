@@ -51,7 +51,8 @@ const routes = [
     {
         path: '/admin/panel',
         name: 'AdminPanel',
-        component: Panel
+        component: Panel,
+        meta: { requiresAdmin: true }
     },
     {
         path: '/register/:token',
@@ -83,6 +84,14 @@ router.beforeEach(async (to) => {
         return loginRoute(to);
     }
 
+    if (to.meta.requiresAdmin && (!user || user.role !== 'admin')) {
+        return { name: 'Admin' };
+    }
+
+    if (to.name === 'Admin' && user && user.role === 'admin') {
+        return { name: 'AdminPanel' };
+    }
+
     if (to.name === 'Welcome' && user) {
         return safeRedirect(to.query.redirect);
     }
@@ -92,7 +101,9 @@ router.beforeEach(async (to) => {
 
 session.onExpired(() => {
     const current = router.currentRoute.value;
-    if (current.meta.requiresAuth) {
+    if (current.meta.requiresAdmin) {
+        router.replace({ name: 'Admin' });
+    } else if (current.meta.requiresAuth) {
         router.replace(loginRoute(current));
     }
 });

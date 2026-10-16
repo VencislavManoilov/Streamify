@@ -15,7 +15,7 @@ const rangeParser = require('range-parser');
 const Authorization = require('./middleware/Auth');
 const TorrentManager = require('./utils/torrentManager');
 const yts = require('./utils/yts');
-const transporter = require('./utils/mailer');
+const { sendMail, startMailMonitor } = require('./utils/mailer');
 const srtToVtt = require('srt-to-vtt');
 const logger = require('./utils/logger');
 const fs = require('fs');
@@ -172,6 +172,7 @@ app.use('/admin', async (req, res, next) => {
     req.torrentManager = global.torrentManager;
     req.fetchTrendingMovies = fetchTrendingMovies;
     req.nextRefresh = nextRefresh;
+    req.tmdb = tmdb;
     next();
 }, adminRoute);
 adminRoute.ws(app);
@@ -815,7 +816,7 @@ async function emailAdmin(subject, text, html) {
     }
 
     try {
-        await transporter.sendMail({ from: process.env.EMAIL_USER, to: adminUser.email, subject, text, html });
+        await sendMail({ from: process.env.EMAIL_USER, to: adminUser.email, subject, text, html });
     } catch (error) {
         logger.error("Error sending email: " + (error.message || error));
     }
@@ -913,6 +914,8 @@ app.use((err, req, res, next) => {
             server.listen(PORT, () => {
                 logger.info(`Server is running on port ${PORT}`);
             });
+
+            startMailMonitor();
         });
     } catch (err) {
         logger.error('Failed to load WebTorrent module: ' + err);
