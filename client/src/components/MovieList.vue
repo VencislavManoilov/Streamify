@@ -1,6 +1,8 @@
 <template>
     <section class="row">
         <h2 class="row-title">{{ category.name }}</h2>
+        <!-- Stays in the row instead of replacing it, so an open card doesn't close when the last movie goes -->
+        <slot v-if="!category.movies.length" name="empty" />
         <div class="row-viewport">
             <div class="movies"
                 ref="track"

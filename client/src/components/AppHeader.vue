@@ -1,10 +1,17 @@
 <template>
     <header class="app-header">
-        <button v-if="back" class="back-button" type="button" aria-label="Back" @click="goBack">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M19 12H5M11 5l-7 7 7 7" />
-            </svg>
-        </button>
+        <div v-if="back" class="header-nav">
+            <button class="nav-button" type="button" aria-label="Back" @click="goBack">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M19 12H5M11 5l-7 7 7 7" />
+                </svg>
+            </button>
+            <router-link v-if="showHome" to="/" class="nav-button" aria-label="Home">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 10.5 12 4l8 6.5M6 9v11h4.5v-5.5h3V20H18V9" />
+                </svg>
+            </router-link>
+        </div>
         <SearchBar v-if="search" class="header-search" />
         <div class="header-end">
             <router-link v-if="adminLink && isAdmin" to="/admin" class="admin-link">Admin</router-link>
@@ -46,18 +53,38 @@ export default {
             default: false
         }
     },
+    data() {
+        return {
+            // The earlier page of this site that the back button returns to, if there is one
+            backPath: null
+        };
+    },
     computed: {
         username() {
             return session.user ? session.user.username : '';
         },
         isAdmin() {
             return session.isAdmin;
+        },
+        // Not needed when the back button leads to the home page anyway
+        showHome() {
+            return !!this.backPath && this.$router.resolve(this.backPath).name !== 'Home';
+        }
+    },
+    watch: {
+        // history.state isn't reactive, so it's read again after every navigation
+        $route: {
+            immediate: true,
+            handler() {
+                const state = window.history.state;
+                this.backPath = (state && state.back) || null;
+            }
         }
     },
     methods: {
         goBack() {
             // Go back if the previous page is part of this site, otherwise go to the home page
-            if (window.history.state && window.history.state.back) {
+            if (this.backPath) {
                 this.$router.back();
             } else {
                 this.$router.push('/');
@@ -88,13 +115,21 @@ export default {
     margin-left: auto;
 }
 
-.back-button {
+.header-nav {
+    display: flex;
+    gap: 8px;
+    flex: none;
+}
+
+/* Back is a button and Home a link, border-box keeps them the same size */
+.nav-button {
     flex: none;
     display: grid;
     place-items: center;
     width: 44px;
     height: 44px;
     padding: 0;
+    box-sizing: border-box;
     border: 1px solid var(--line);
     border-radius: 50%;
     background: var(--surface);
@@ -103,15 +138,15 @@ export default {
     transition: background-color 0.2s ease, transform 0.2s ease;
 }
 
-.back-button:hover {
+.nav-button:hover {
     background: var(--surface-hover);
 }
 
-.back-button:active {
+.nav-button:active {
     transform: scale(0.94);
 }
 
-.back-button svg {
+.nav-button svg {
     width: 22px;
     height: 22px;
     fill: none;

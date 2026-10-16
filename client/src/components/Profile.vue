@@ -14,7 +14,7 @@
                 <button class="logout" type="button" @click="logout">Log out</button>
             </section>
 
-            <section v-if="!error" class="stats" aria-label="Your statistics">
+            <section v-if="!historyError" class="stats" aria-label="Your statistics">
                 <div class="stat">
                     <span class="value">{{ stats.moviesWatched }}</span>
                     <span class="label">{{ stats.moviesWatched === 1 ? 'movie watched' : 'movies watched' }}</span>
@@ -29,7 +29,14 @@
                 </div>
             </section>
 
-            <p v-if="error" class="message">{{ error }}</p>
+            <MovieList :category="watchlistRow">
+                <template #empty>
+                    <p v-if="watchlistError" class="row-message">{{ watchlistError }}</p>
+                    <p v-else class="row-message">The movies you save with the bookmark button will show up here until you've watched them.</p>
+                </template>
+            </MovieList>
+
+            <p v-if="historyError" class="message">{{ historyError }}</p>
             <MovieList v-else-if="history.length" :category="historyRow" />
             <section v-else class="empty">
                 <h2>Watch history</h2>
@@ -43,6 +50,7 @@
 <script>
 import api from '../api';
 import { session } from '../session';
+import { watchlist } from '../watchlist';
 import AppHeader from './AppHeader.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
 import MovieList from './MovieList.vue';
@@ -59,7 +67,8 @@ export default {
     data() {
         return {
             loading: true,
-            error: null,
+            historyError: null,
+            watchlistError: null,
             stats: { moviesWatched: 0, secondsWatched: 0, moviesFinished: 0 },
             history: []
         };
@@ -77,22 +86,35 @@ export default {
             const hours = Math.floor(minutes / 60);
             return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
         },
+        watchlistRow() {
+            return { name: 'Watchlist', movies: watchlist.movies };
+        },
         historyRow() {
             return { name: 'Watch history', movies: this.history };
         }
     },
     async mounted() {
-        try {
-            const response = await api.get('/history');
-            this.stats = response.data.stats;
-            this.history = response.data.history;
-        } catch (err) {
-            if (!err.response || err.response.status !== 401) {
-                this.error = "Your watch history couldn't be loaded. Refresh the page to try again.";
-            }
-        } finally {
-            this.loading = false;
+        // A rejected session already sends the user to the login page
+        const loggedOut = err => !!err.response && err.response.status === 401;
+
+        const [history, saved] = await Promise.allSettled([
+            api.get('/history'),
+            // Asked for again here, since movies finished on another device have left the list
+            watchlist.load({ refresh: true })
+        ]);
+
+        if (history.status === 'fulfilled') {
+            this.stats = history.value.data.stats;
+            this.history = history.value.data.history;
+        } else if (!loggedOut(history.reason)) {
+            this.historyError = "Your watch history couldn't be loaded. Refresh the page to try again.";
         }
+
+        if (saved.status === 'rejected' && !loggedOut(saved.reason)) {
+            this.watchlistError = "Your watchlist couldn't be loaded. Refresh the page to try again.";
+        }
+
+        this.loading = false;
     },
     methods: {
         logout() {
@@ -114,6 +136,7 @@ export default {
     flex-wrap: wrap;
     gap: 24px;
     padding: 16px var(--gutter) 0;
+    margin-bottom: 40px;
 }
 
 .who {
@@ -164,7 +187,7 @@ export default {
 .stats {
     display: flex;
     flex-wrap: wrap;
-    margin: 40px var(--gutter) 44px;
+    margin: 0 var(--gutter) 44px;
 }
 
 .stat {
@@ -194,6 +217,12 @@ export default {
 }
 
 .message {
+    padding: 0 var(--gutter);
+    color: var(--text-muted);
+}
+
+.row-message {
+    margin: 0;
     padding: 0 var(--gutter);
     color: var(--text-muted);
 }

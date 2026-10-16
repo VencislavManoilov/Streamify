@@ -17,9 +17,13 @@
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" /></svg>
                                 <span>Play</span>
                             </router-link>
-                            <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" rel="noopener noreferrer" class="imdb-button" aria-label="Open on IMDb">
-                                <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDb">
-                            </a>
+                            <!-- Kept together, so on narrow screens they wrap below Play as a pair -->
+                            <div class="more-actions">
+                                <WatchlistButton :movie="movie" />
+                                <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" rel="noopener noreferrer" class="imdb-button" aria-label="Open on IMDb">
+                                    <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDb">
+                                </a>
+                            </div>
                         </div>
 
                         <p class="facts">
@@ -43,10 +47,15 @@
 </template>
 
 <script>
+import WatchlistButton from './WatchlistButton.vue';
+
 let instances = 0;
 
 export default {
     name: 'MovieDetails',
+    components: {
+        WatchlistButton
+    },
     props: {
         movie: {
             type: Object,
@@ -235,6 +244,11 @@ export default {
     align-items: center;
     gap: 12px;
     margin: 4px 0 20px;
+}
+
+.more-actions {
+    display: flex;
+    gap: 12px;
 }
 
 .play-button {

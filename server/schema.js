@@ -44,12 +44,22 @@ const schemaDefinition = {
     completed: { type: 'boolean', notNullable: true, defaultTo: false },
     last_watched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // Movies a user saved for later. A movie leaves the list once it has been watched to the end.
+  watchlist: {
+    id: { type: 'increments', primary: true },
+    user_id: { type: 'integer', notNullable: true, references: 'users.id', onDelete: 'CASCADE' },
+    imdb_code: { type: 'string', notNullable: true },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   }
 };
 
 // Constraints that span more than one column, added when the table is created
 const tableConstraints = {
   watch_history: {
+    unique: [['user_id', 'imdb_code']],
+  },
+  watchlist: {
     unique: [['user_id', 'imdb_code']],
   }
 };

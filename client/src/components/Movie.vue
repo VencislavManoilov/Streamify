@@ -6,7 +6,11 @@
         <p v-else-if="pageError" class="page-message">{{ pageError }}</p>
 
         <div class="movie-details" v-if="movie">
-            <h1 class="title">{{ movie.title }}</h1>
+            <div class="title-row">
+                <h1 class="title">{{ movie.title }}</h1>
+                <!-- Blurred after a click, so Space keeps pausing the movie instead of pressing it again -->
+                <WatchlistButton :movie="movie" @click="$event.currentTarget.blur()" />
+            </div>
 
             <div class="torrents" v-if="showTorrents && movie.torrents && movie.torrents.length">
                 <button
@@ -119,8 +123,10 @@ import 'plyr/dist/plyr.css';
 import api from '../api';
 import { API_URL } from '../config';
 import { session } from '../session';
+import { watchlist } from '../watchlist';
 import AppHeader from './AppHeader.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
+import WatchlistButton from './WatchlistButton.vue';
 
 // How often the position is saved while watching
 const SAVE_INTERVAL = 15000;
@@ -135,7 +141,8 @@ export default {
     name: 'MoviePage',
     components: {
         AppHeader,
-        LoadingSpinner
+        LoadingSpinner,
+        WatchlistButton
     },
     data() {
         return {
@@ -433,8 +440,12 @@ export default {
                 }
             }
 
-            api.put(`/history/${this.movie.imdb_code}`, payload).then(() => {
+            api.put(`/history/${this.movie.imdb_code}`, payload).then((response) => {
                 this.savedProgress = this.savedProgress || payload;
+                // Watching the movie to the end took it off the watchlist
+                if (response.data && response.data.removedFromWatchlist) {
+                    watchlist.forget(this.movie.imdb_code);
+                }
             }).catch(() => {
                 // Count this time again with the next save
                 this.unsavedWatch += payload.watched;
@@ -568,8 +579,17 @@ export default {
     padding: 0 var(--gutter) 48px;
 }
 
-.title {
+.title-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
     margin: 8px 0 20px;
+}
+
+.title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
     font-size: clamp(1.9rem, 4.2vw, 2.8rem);
     font-weight: 800;
     font-stretch: 115%;

@@ -89,6 +89,11 @@ async function saveProgress(req, res) {
             return res.status(404).json({ error: 'Movie not found' });
         }
 
+        const previous = await req.knex('watch_history')
+            .where({ user_id: req.user.id, imdb_code })
+            .first('position', 'duration');
+        const wasFinished = !!previous && previous.position >= previous.duration * FINISHED_RATIO;
+
         const progress = {
             position: Math.min(position, duration),
             duration,
@@ -115,7 +120,15 @@ async function saveProgress(req, res) {
                 last_watched_at: req.knex.fn.now()
             });
 
-        res.status(204).end();
+        // Watching a movie to the end takes it off the watchlist. Only the report that crosses the finish line
+        // does it, so a movie put back on the list while the credits roll stays there.
+        let removedFromWatchlist = false;
+        if (finished && !wasFinished) {
+            const removed = await req.knex('watchlist').where({ user_id: req.user.id, imdb_code }).del();
+            removedFromWatchlist = removed > 0;
+        }
+
+        res.json({ removedFromWatchlist });
     } catch (err) {
         res.status(500).json({ error: 'Failed to save the progress' });
     }

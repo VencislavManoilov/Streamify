@@ -182,6 +182,9 @@ app.use('/auth', withKnex, authRoute);
 const historyRoute = require('./routes/history');
 app.use('/history', withKnex, historyRoute);
 
+const watchlistRoute = require('./routes/watchlist');
+app.use('/watchlist', withKnex, watchlistRoute);
+
 app.get("/movies", withKnex, Authorization, (req, res) => {
     knex('movies').select('*').limit(15).then(movies => {
         res.json({ movies });
