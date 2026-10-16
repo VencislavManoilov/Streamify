@@ -806,8 +806,25 @@ const fetchTrendingMovies = async () => {
     return logger.info("Fetched movies for categories!");
 };
 
-let lastFetchTime = Date.now(); // Store the timestamp of the last fetch
-const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+// The categories refresh on a fixed weekly slot (Monday 00:00, server time), so restarting the
+// server doesn't push the next refresh back by a week
+const REFRESH_DAY = 1; // 0 = Sunday, 1 = Monday, ...
+const REFRESH_HOUR = 0;
+
+// The most recent weekly slot at or before `from`
+function previousRefreshSlot(from = new Date()) {
+    const slot = new Date(from);
+    slot.setHours(REFRESH_HOUR, 0, 0, 0);
+    slot.setDate(slot.getDate() - ((slot.getDay() - REFRESH_DAY + 7) % 7));
+    if (slot > from) slot.setDate(slot.getDate() - 7);
+    return slot;
+}
+
+function nextRefresh() {
+    const slot = previousRefreshSlot();
+    slot.setDate(slot.getDate() + 7);
+    return slot.getTime();
+}
 
 async function emailAdmin(subject, text, html) {
     const adminUser = await knex('users').where({ role: 'admin' }).first();
@@ -822,12 +839,11 @@ async function emailAdmin(subject, text, html) {
     }
 }
 
-setInterval(async () => {
+async function refreshCategories() {
     const URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
     try {
         await fetchTrendingMovies();
-        lastFetchTime = Date.now(); // Update the last fetch time
 
         await emailAdmin(
             'Successfully Refreshed the Categories! Streamify',
@@ -851,12 +867,14 @@ setInterval(async () => {
             `
         );
     }
-}, SEVEN_DAYS_IN_MS);
+}
 
-function nextRefresh() {
-    const nextRefreshTime = lastFetchTime + SEVEN_DAYS_IN_MS;
-
-    return nextRefreshTime;
+function scheduleWeeklyRefresh() {
+    // Recomputed after every run instead of a fixed interval, so daylight saving changes don't shift the slot
+    setTimeout(async () => {
+        await refreshCategories();
+        scheduleWeeklyRefresh();
+    }, Math.max(0, nextRefresh() - Date.now()));
 }
 
 // Errors thrown by route handlers end up here instead of in Express' HTML error page
@@ -903,6 +921,14 @@ app.use((err, req, res, next) => {
             }
 
             await loadCategories();
+
+            // The server was down during the last weekly slot, so catch up now without delaying the start
+            const lastRefresh = await knex('categories').min('created_at as at').first();
+            if (lastRefresh && lastRefresh.at && new Date(lastRefresh.at) < previousRefreshSlot()) {
+                logger.info("Missed the weekly category refresh while the server was down, refreshing now...");
+                refreshCategories();
+            }
+            scheduleWeeklyRefresh();
 
             // Check if the users table is emtpy
             const users = await knex('users').select('*');
