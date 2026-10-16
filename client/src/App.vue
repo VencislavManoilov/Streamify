@@ -61,7 +61,8 @@ body {
   line-height: 1.5;
 }
 
-/* Dusk over a dark room: a violet glow top left, petrol teal top right and a faint wine glow below */
+/* Dusk over a dark room, spread over the whole screen: violet in the top left and bottom right corners,
+   petrol teal down the right side, wine in the bottom left and a faint violet haze in the middle */
 body::before {
   content: '';
   position: fixed;
@@ -69,10 +70,12 @@ body::before {
   z-index: -2;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 55% at 8% -10%, rgba(92, 66, 196, 0.34), transparent 64%),
-    radial-gradient(ellipse 65% 50% at 96% -6%, rgba(22, 108, 138, 0.28), transparent 62%),
-    radial-gradient(ellipse 90% 55% at 50% 116%, rgba(118, 36, 84, 0.2), transparent 66%),
-    linear-gradient(180deg, #0b0c19 0%, #06070d 48%, #050509 100%);
+    radial-gradient(ellipse 80% 70% at 5% 2%, rgba(92, 66, 196, 0.38), transparent 72%),
+    radial-gradient(ellipse 62% 72% at 98% 18%, rgba(22, 108, 138, 0.32), transparent 72%),
+    radial-gradient(ellipse 70% 55% at 52% 56%, rgba(64, 52, 150, 0.16), transparent 72%),
+    radial-gradient(ellipse 75% 62% at 3% 100%, rgba(118, 36, 84, 0.3), transparent 72%),
+    radial-gradient(ellipse 70% 60% at 100% 100%, rgba(92, 66, 196, 0.22), transparent 72%),
+    linear-gradient(160deg, #0c0d1c 0%, #08091a 45%, #09070f 100%);
 }
 
 /* Fine grain keeps the dark gradients from banding */
