@@ -22,18 +22,26 @@
                 >{{ torrent.type }} {{ torrent.quality }} {{ torrent.video_codec }}</button>
             </div>
 
-            <div class="video-container" :class="{ started: start }">
+            <!-- Also the fullscreen element, so the overlays below and the popups stay visible in fullscreen.
+                 Clicking a control never focuses it, so Space always pauses instead of pressing that control. -->
+            <div
+                ref="videoContainer"
+                class="video-container"
+                :class="{ started: start }"
+                :style="captionStyle"
+                @mousedown.capture="keepFocus"
+            >
                 <!-- Plyr owns this element; its source and subtitle tracks are set from code -->
                 <video ref="video" id="movie-player" controls playsinline preload="none" :poster="movie.background_image"></video>
 
                 <div v-if="!start" class="overlay start">
                     <template v-if="selectedTorrent && !showTorrents">
-                        <button class="play-button" type="button" :aria-label="resumeAt ? `Resume from ${formatTime(resumeAt)}` : 'Play'" @click="startMovie()">
+                        <button class="play-button" type="button" tabindex="-1" :aria-label="resumeAt ? `Resume from ${formatTime(resumeAt)}` : 'Play'" @click="startMovie()">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.6 5.75v12.5L18.1 12z" /></svg>
                         </button>
                         <template v-if="resumeAt">
                             <p class="resume">Resume from {{ formatTime(resumeAt) }}</p>
-                            <button class="start-over" type="button" @click="startMovie(true)">Start from the beginning</button>
+                            <button class="start-over" type="button" tabindex="-1" @click="startMovie(true)">Start from the beginning</button>
                         </template>
                     </template>
                     <p v-else-if="showTorrents" class="overlay-message">Select a quality above to start watching</p>
@@ -41,91 +49,108 @@
 
                 <div v-if="start && (!isVideoLoaded || buffering) && !loadError" class="overlay loading">
                     <LoadingSpinner :size="60" label="Loading the video" />
+                    <p v-if="streamNote" class="overlay-note">{{ streamNote }}</p>
                 </div>
 
                 <div v-if="loadError" class="overlay failed">
                     <p class="overlay-message">{{ loadError }}</p>
-                    <button class="retry" type="button" @click="retry">Try again</button>
+                    <button class="retry" type="button" tabindex="-1" @click="retry">Try again</button>
                 </div>
 
-                <!-- Subtitle settings modal -->
-                <div v-if="showSubtitleSettings" class="subtitle-settings-modal" @click.self="showSubtitleSettings = false">
-                    <div class="subtitle-settings-container">
-                        <h3>Subtitle Settings</h3>
-                        <div class="setting-group">
-                            <label>Font Size</label>
-                            <div class="setting-controls">
-                                <button @click="changeFontSize(-0.1)">-</button>
-                                <span>{{ (subtitleSettings.fontSize * 100).toFixed(0) }}%</span>
-                                <button @click="changeFontSize(0.1)">+</button>
-                            </div>
-                        </div>
+                <!-- The settings button sits in Plyr's control bar, between the captions and fullscreen buttons -->
+                <Teleport v-if="settingsSlot" :to="settingsSlot">
+                    <button
+                        type="button"
+                        tabindex="-1"
+                        class="plyr__control"
+                        aria-label="Settings"
+                        aria-haspopup="dialog"
+                        :aria-expanded="settingsOpen ? 'true' : 'false'"
+                        @click="toggleSettings"
+                    >
+                        <svg viewBox="0 0 18 18" aria-hidden="true"><path :d="settingsIcon" /></svg>
+                    </button>
+                    <Transition name="settings">
+                        <PlayerSettings
+                            v-if="settingsOpen"
+                            :speed="speed"
+                            :speeds="speeds"
+                            :tracks="subtitleTracks"
+                            :current-track="currentTrack"
+                            :offset="subtitleOffset"
+                            :subtitle-style="subtitleStyle"
+                            @update:speed="setSpeed"
+                            @select-track="selectTrack"
+                            @update:offset="setOffset"
+                            @update:subtitle-style="setSubtitleStyle"
+                        />
+                    </Transition>
+                </Teleport>
+            </div>
 
-                        <div class="setting-group">
-                            <label>Background Opacity</label>
-                            <div class="setting-controls">
-                                <button @click="changeBackgroundOpacity(-0.1)">-</button>
-                                <span>{{ (subtitleSettings.bgOpacity * 100).toFixed(0) }}%</span>
-                                <button @click="changeBackgroundOpacity(0.1)">+</button>
-                            </div>
-                        </div>
-
-                        <div class="setting-group">
-                            <label>Text Color</label>
-                            <div class="color-options">
-                                <span
-                                    v-for="color in colors"
-                                    :key="color"
-                                    :style="{ backgroundColor: color }"
-                                    class="color-option"
-                                    :class="{ active: subtitleSettings.color === color }"
-                                    @click="subtitleSettings.color = color; applySubtitleSettings()"
-                                ></span>
-                            </div>
-                        </div>
-
-                        <button class="close-btn" @click="showSubtitleSettings = false">Close</button>
+            <section class="about">
+                <div class="facts-row">
+                    <p class="facts">
+                        <span class="rating">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" /></svg>
+                            {{ movie.rating }} / 10
+                        </span>
+                        <span v-if="movie.year">{{ movie.year }}</span>
+                        <span v-if="runtime">{{ runtime }}</span>
+                        <span v-if="details && details.certification" class="certification" :title="`Rated ${details.certification}`">{{ details.certification }}</span>
+                        <span v-if="genres" class="genres">{{ genres }}</span>
+                    </p>
+                    <div class="links">
+                        <a v-if="trailerUrl" :href="trailerUrl" target="_blank" rel="noopener noreferrer" class="trailer-button" title="Watch the trailer on YouTube">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 8.8v6.4l5.2-3.2z" /><circle cx="12" cy="12" r="8.6" /></svg>
+                            <span>Trailer</span>
+                        </a>
+                        <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" rel="noopener noreferrer" class="imdb-button" aria-label="Open on IMDb">
+                            <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDb">
+                        </a>
                     </div>
                 </div>
+
+                <p v-if="details && details.tagline" class="tagline">{{ details.tagline }}</p>
+
+                <div class="summary">
+                    <h2>Summary</h2>
+                    <p>{{ movie.summary || "No summary available" }}</p>
+                </div>
+
+                <MovieExtras class="extras" :details="details" :loading="detailsLoading" variant="page" />
+            </section>
+
+            <div class="reset-row">
+                <button class="reset-button" type="button" @click="showResetDialog = true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4" /></svg>
+                    Reset movie
+                </button>
+                <p class="reset-hint">Video not loading or a quality missing? Resetting looks for the latest torrents.</p>
             </div>
-
-            <!-- Subtitle settings button -->
-            <button v-if="selectedTorrent" class="subtitle-settings-btn" type="button" @click="openSubtitleSettings($event)">
-                Subtitle Settings
-            </button>
-
-            <div class="movie-info">
-                <p class="rating">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" /></svg>
-                    {{ movie.rating }} / 10
-                </p>
-                <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" rel="noopener noreferrer" class="imdb-button" aria-label="Open on IMDb">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDb">
-                </a>
-            </div>
-
-            <p class="year">Year: {{ movie.year }}</p>
-            <p class="genres">Genres: {{ (movie.genres || []).join(', ') }}</p>
-
-            <div class="summary">
-                <h2>Summary</h2>
-                <p>{{ movie.summary || "No summary available" }}</p>
-            </div>
-
-            <button class="resetMovie" type="button" @click="resetMovie()">Reset</button>
         </div>
+
+        <ResetMovieDialog v-if="showResetDialog" :movie="movie" @close="showResetDialog = false" @reset="onReset" />
     </div>
 </template>
 
 <script>
+import { markRaw } from 'vue';
 import Plyr from 'plyr';
 import 'plyr/dist/plyr.css';
 import api from '../api';
 import { API_URL } from '../config';
+import { connection } from '../connection';
+import { movieDetails, formatRuntime } from '../movieDetails';
 import { session } from '../session';
+import { loadOffset, loadStyle, saveOffset, saveStyle, shiftCues } from '../subtitles';
+import { watchHistory } from '../watchHistory';
 import { watchlist } from '../watchlist';
 import AppHeader from './AppHeader.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
+import MovieExtras from './MovieExtras.vue';
+import PlayerSettings from './PlayerSettings.vue';
+import ResetMovieDialog from './ResetMovieDialog.vue';
 import WatchlistButton from './WatchlistButton.vue';
 
 // How often the position is saved while watching
@@ -134,14 +159,28 @@ const SAVE_INTERVAL = 15000;
 const MIN_RESUME_SECONDS = 30;
 // Past this point the credits are rolling, so the next time starts from the beginning
 const FINISHED_RATIO = 0.95;
-// A movie only lands in the history after it has really been watched for a moment
-const MIN_WATCH_SECONDS = 10;
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+// A stream that gets no data for this long while the movie waits for it is loaded again. Before the
+// movie has played at all the server may still be loading the torrent, which can take a minute.
+const STALL_TIMEOUT = 15000;
+const START_TIMEOUT = 75000;
+// Times a broken stream is loaded again before the error is shown, when it doesn't play in between
+const MAX_RECOVERIES = 4;
+// Plyr's own settings icon
+const SETTINGS_ICON = 'M16.135 7.784a2 2 0 01-1.23-2.969c.322-.536.225-.998-.094-1.316l-.31-.31c-.318-.318-.78-.415-1.316-.094a2 2 0 01-2.969-1.23C10.065 1.258 9.669 1 9.219 1h-.438c-.45 0-.845.258-.997.865a2 2 0 01-2.969 1.23c-.536-.322-.999-.225-1.317.093l-.31.31c-.318.318-.415.781-.093 1.317a2 2 0 01-1.23 2.969C1.26 7.935 1 8.33 1 8.781v.438c0 .45.258.845.865.997a2 2 0 011.23 2.969c-.322.536-.225.998.094 1.316l.31.31c.319.319.782.415 1.316.094a2 2 0 012.969 1.23c.151.607.547.865.997.865h.438c.45 0 .845-.258.997-.865a2 2 0 012.969-1.23c.535.321.997.225 1.316-.094l.31-.31c.318-.318.415-.781.094-1.316a2 2 0 011.23-2.969c.607-.151.865-.547.865-.997v-.438c0-.451-.26-.846-.865-.997zM9 12a3 3 0 110-6 3 3 0 010 6z';
+
+function bestTorrent(torrents) {
+    return torrents.find(torrent => torrent.quality == '1080p' && torrent.video_codec == 'x264') || torrents.find(torrent => torrent.quality == "1080p") || torrents[0];
+}
 
 export default {
     name: 'MoviePage',
     components: {
         AppHeader,
         LoadingSpinner,
+        MovieExtras,
+        PlayerSettings,
+        ResetMovieDialog,
         WatchlistButton
     },
     data() {
@@ -157,13 +196,23 @@ export default {
             player: null,
             savedProgress: null,
             resumeAt: 0,
-            showSubtitleSettings: false,
-            subtitleSettings: {
-                fontSize: 1.0,       // multiplier for default size
-                bgOpacity: 0.5,      // background opacity 0-1
-                color: '#ffffff'     // text color
-            },
-            colors: ['#ffffff', '#ffff00', '#00ff00', '#00ffff', '#ff00ff']
+            // Cast, crew and the rest from TMDB
+            details: null,
+            detailsLoading: true,
+            // The element in Plyr's control bar that holds the settings button
+            settingsSlot: null,
+            settingsOpen: false,
+            settingsIcon: SETTINGS_ICON,
+            speed: 1,
+            speeds: SPEEDS,
+            // [{ index, label, language, status }], in the order of the video's text tracks
+            subtitleTracks: [],
+            currentTrack: -1,
+            subtitleOffset: 0,
+            subtitleStyle: loadStyle(),
+            // null, 'reconnecting' or 'offline' while the stream is being picked up again
+            streamState: null,
+            showResetDialog: false
         };
     },
     computed: {
@@ -172,21 +221,69 @@ export default {
         },
         isMobile() {
             return window.innerWidth < 768;
+        },
+        runtime() {
+            return formatRuntime(this.movie.runtime);
+        },
+        genres() {
+            return (this.movie.genres || []).join(', ');
+        },
+        trailerUrl() {
+            const trailer = this.details && this.details.trailer;
+            return trailer ? `https://www.youtube.com/watch?v=${encodeURIComponent(trailer.key)}` : '';
+        },
+        // Plyr reads the caption colors from these variables; the size scales with the player's width
+        captionStyle() {
+            return {
+                '--caption-scale': this.subtitleStyle.fontSize,
+                '--plyr-captions-background': `rgba(0, 0, 0, ${this.subtitleStyle.bgOpacity})`,
+                '--plyr-captions-text-color': this.subtitleStyle.color
+            };
+        },
+        streamNote() {
+            if (this.streamState === 'offline') return "You're offline. The movie continues when the connection is back.";
+            if (this.streamState === 'reconnecting') return 'Reconnecting…';
+            return '';
         }
     },
     created() {
-        this.loadSavedSubtitleSettings();
         // Progress bookkeeping, kept out of the reactive data on purpose
         this.lastTime = null;
         this.unsavedWatch = 0;
-        this.watchedThisVisit = 0;
         this.lastSavedPosition = null;
         this.pendingSeek = null;
+        this.duration = null;
+        // Set once the movie has really played on this visit
+        this.everPlayed = false;
+
+        // Stream health, see checkStream
+        this.lastDataAt = Date.now();
+        this.recoveries = 0;
+        this.recovering = false;
+        this.waitingForNetwork = false;
+        this.staleStream = false;
+        this.trackElements = [];
+        // Subtitle offsets of this movie by language, read from storage the first time they're needed
+        this.offsets = {};
+
+        this.stopReconnect = connection.onReconnect(() => this.onReconnect());
     },
     async mounted() {
         const imdbCode = this.$route.params.imdb_code;
 
+        this.onKeydown = (event) => this.handleKey(event);
+        this.onPointerUp = () => this.dropFocus();
+        this.onPointerDown = (event) => this.closeSettingsOutside(event);
+        this.onResize = () => this.fitSettings();
+        window.addEventListener('keydown', this.onKeydown, true);
+        window.addEventListener('pointerup', this.onPointerUp, true);
+        window.addEventListener('pointerdown', this.onPointerDown, true);
+        window.addEventListener('resize', this.onResize);
+        document.addEventListener('fullscreenchange', this.onResize);
+
         try {
+            // The movie may have been left a moment ago, and its last position may still be on the way
+            await watchHistory.settled();
             const [movieResponse, progressResponse] = await Promise.all([
                 api.get(`/movies/${imdbCode}`),
                 api.get(`/history/${imdbCode}`).catch(() => null)
@@ -204,26 +301,38 @@ export default {
             return;
         }
 
-        const torrents = this.movie.torrents || [];
-        const bestTorrent = torrents.find(torrent => torrent.quality == '1080p' && torrent.video_codec == 'x264') || torrents.find(torrent => torrent.quality == "1080p") || torrents[0];
-        if (!bestTorrent) {
+        this.loadDetails();
+
+        const torrent = bestTorrent(this.movie.torrents || []);
+        if (!torrent) {
             this.pageError = 'There is no video for this movie yet.';
             return;
         }
 
         await this.$nextTick();
         this.setupPlayer();
-        this.selectTorrent(bestTorrent.hash);
+        this.selectTorrent(torrent.hash);
     },
     methods: {
+        loadDetails() {
+            this.detailsLoading = true;
+            movieDetails.load(this.movie.imdb_code).then((details) => {
+                this.details = details;
+            }).catch(() => {
+                // The page works without them, the section is just left out
+            }).finally(() => {
+                this.detailsLoading = false;
+            });
+        },
         setupPlayer() {
             const videoElement = this.$refs.video;
             if (!videoElement) return;
 
             if (!this.isMobile) {
-                this.player = new Plyr(videoElement, {
+                this.player = markRaw(new Plyr(videoElement, {
                     keyboard: { focused: false, global: true },
                     captions: { active: true, update: true },
+                    fullscreen: { enabled: true, fallback: true, iosNative: false, container: '.video-container' },
                     controls: [
                         'play-large',
                         'rewind',
@@ -235,29 +344,45 @@ export default {
                         'mute',
                         'volume',
                         'captions',
-                        'settings',
                         'fullscreen'
                     ],
                     seekTime: 10,
-                    settings: ['captions', 'quality', 'speed']
-                });
+                    speed: { selected: 1, options: SPEEDS }
+                }));
 
-                // Apply custom styles
-                this.applySubtitleSettings();
+                this.addSettingsButton();
+                // Like Plyr's own menu, the settings close when the controls hide
+                this.player.on('controlshidden', () => {
+                    this.settingsOpen = false;
+                });
+                for (const event of ['captionsenabled', 'captionsdisabled', 'languagechange']) {
+                    this.player.on(event, () => this.syncCaptions());
+                }
             }
+
+            // Plyr's controls stay out of the Tab order, so the keyboard always controls the movie itself
+            this.$refs.videoContainer.querySelectorAll('button, input, [tabindex]').forEach((element) => {
+                element.setAttribute('tabindex', '-1');
+            });
 
             // Plyr keeps using this same element, so these listeners stay valid (mobile uses it directly)
             this.videoListeners = {
                 loadedmetadata: () => this.onLoadedMetadata(),
-                playing: () => {
-                    this.isVideoLoaded = true;
-                    this.buffering = false;
+                durationchange: () => {
+                    if (Number.isFinite(videoElement.duration) && videoElement.duration > 0) this.duration = videoElement.duration;
                 },
+                playing: () => this.onPlaying(),
                 canplay: () => {
                     this.buffering = false;
+                    this.lastDataAt = Date.now();
                 },
                 waiting: () => {
                     this.buffering = true;
+                    this.lastDataAt = Date.now();
+                },
+                // Data is arriving, so the stream is alive even while the movie still waits for enough of it
+                progress: () => {
+                    this.lastDataAt = Date.now();
                 },
                 error: () => this.onVideoError(),
                 timeupdate: () => this.onTimeUpdate(),
@@ -265,12 +390,33 @@ export default {
                     this.lastTime = videoElement.currentTime;
                     this.saveProgress();
                 },
+                play: () => {
+                    // The connection came back while the movie was paused, its old stream is gone
+                    if (this.staleStream) this.resumeStream();
+                },
                 pause: () => this.saveProgress(),
-                ended: () => this.saveProgress()
+                ended: () => this.saveProgress(),
+                ratechange: () => {
+                    this.speed = videoElement.playbackRate;
+                    // Loading the stream again resets the speed to this one
+                    if (videoElement.defaultPlaybackRate !== videoElement.playbackRate) {
+                        videoElement.defaultPlaybackRate = videoElement.playbackRate;
+                    }
+                }
             };
             for (const [event, listener] of Object.entries(this.videoListeners)) {
                 videoElement.addEventListener(event, listener);
             }
+
+            this.streamTimer = setInterval(() => this.checkStream(), 2000);
+        },
+        addSettingsButton() {
+            const controls = this.player.elements.controls;
+            if (!controls) return;
+            const slot = document.createElement('div');
+            slot.className = 'plyr__controls__item plyr__menu';
+            controls.insertBefore(slot, controls.querySelector('[data-plyr="fullscreen"]'));
+            this.settingsSlot = slot;
         },
         startMovie(fromBeginning = false) {
             const videoElement = this.$refs.video;
@@ -292,6 +438,8 @@ export default {
             this.loadError = null;
             this.pendingSeek = startAt > 0 ? startAt : null;
             this.lastTime = null;
+            this.lastDataAt = Date.now();
+            this.staleStream = false;
 
             videoElement.src = this.videoSrc;
             if (startAt > 0) {
@@ -316,17 +464,114 @@ export default {
             }
             this.pendingSeek = null;
         },
+        onPlaying() {
+            this.isVideoLoaded = true;
+            this.buffering = false;
+            this.recoveries = 0;
+            this.streamState = null;
+            this.lastDataAt = Date.now();
+
+            if (!this.everPlayed) {
+                this.everPlayed = true;
+                // Saved as soon as the movie plays, so it's in the history even when it's left right away
+                this.saveProgress();
+            }
+        },
         onVideoError() {
             if (!this.start) return;
             const videoElement = this.$refs.video;
             console.error('Video error:', videoElement.error);
+            this.buffering = false;
+            // A movie the viewer paused loads its stream again once it's played
+            if (videoElement.paused && this.everPlayed) {
+                this.staleStream = true;
+                return;
+            }
+            this.isVideoLoaded = false;
+            this.recoverStream({ failed: true });
+        },
+        showLoadError() {
+            this.streamState = null;
             this.loadError = "The video couldn't be loaded. Try again or select another quality.";
             this.isVideoLoaded = false;
             this.showTorrents = true;
         },
+        // Runs every 2 seconds. A movie that waits for data that doesn't come has lost its stream, which
+        // happens when the network changes: the old connection just goes quiet.
+        checkStream() {
+            const videoElement = this.$refs.video;
+            if (!videoElement || !this.start || this.loadError || this.recovering || this.waitingForNetwork) return;
+
+            const waiting = !videoElement.paused && !videoElement.ended && (!this.isVideoLoaded || this.buffering);
+            if (!waiting) {
+                this.lastDataAt = Date.now();
+                return;
+            }
+
+            // A torrent that is just slow gets more and more time
+            const limit = this.everPlayed ? STALL_TIMEOUT * 2 ** this.recoveries : START_TIMEOUT;
+            if (Date.now() - this.lastDataAt > limit) {
+                this.recoverStream({ failed: false });
+            }
+        },
+        // Loads a broken stream again from where the movie is, or waits for the connection to come back first
+        async recoverStream({ failed }) {
+            if (this.recovering) return;
+            this.recovering = true;
+            this.streamState = 'reconnecting';
+            const online = await connection.check();
+            this.recovering = false;
+            if (this.destroyed || !this.start) return;
+
+            if (!online) {
+                // onReconnect picks the movie up again
+                this.waitingForNetwork = true;
+                this.streamState = 'offline';
+                return;
+            }
+
+            // With a working connection, a movie that failed before it ever played can't be loaded from this torrent
+            if ((failed && !this.everPlayed) || this.recoveries >= MAX_RECOVERIES) {
+                this.showLoadError();
+                return;
+            }
+
+            // Paused in the meantime, so it waits until it's played
+            if (this.$refs.video.paused && this.everPlayed) {
+                this.streamState = null;
+                this.isVideoLoaded = true;
+                this.staleStream = true;
+                return;
+            }
+
+            this.recoveries += 1;
+            this.resumeStream();
+        },
+        // The connection died with the old network, so the stream is loaded again from where the movie is
+        onReconnect() {
+            const videoElement = this.$refs.video;
+            if (!videoElement || !this.start || videoElement.ended || (this.loadError && !this.waitingForNetwork)) return;
+
+            this.waitingForNetwork = false;
+            this.streamState = null;
+            this.recoveries = 0;
+            // A paused movie loads again once it's played, so nothing is downloaded until then
+            if (videoElement.paused) {
+                this.staleStream = true;
+                return;
+            }
+            this.resumeStream();
+        },
+        resumeStream() {
+            const videoElement = this.$refs.video;
+            if (!videoElement) return;
+            const position = this.pendingSeek !== null ? this.pendingSeek : (videoElement.currentTime || this.lastTime || this.resumeAt);
+            this.loadVideo(position);
+        },
         retry() {
             const videoElement = this.$refs.video;
             const position = this.lastTime || videoElement.currentTime || this.resumeAt;
+            this.recoveries = 0;
             this.loadVideo(position);
         },
         addSubtitleTracks(videoElement) {
@@ -335,14 +580,141 @@ export default {
                 { label: 'English', srclang: 'en', src: `/subtitles/${this.movie.imdb_code}?lang=en&hash=${this.selectedTorrent}`, default: true },
                 { label: 'Bulgarian', srclang: 'bg', src: `/subtitles/${this.movie.imdb_code}?lang=bg` }
             ];
-            for (const { label, srclang, src, default: isDefault } of tracks) {
+            this.subtitleTracks = tracks.map(({ label, srclang }, index) => ({ index, label, language: srclang, status: 'idle' }));
+
+            tracks.forEach(({ label, srclang, src, default: isDefault }, index) => {
                 const track = document.createElement('track');
                 track.kind = 'subtitles';
                 track.label = label;
                 track.srclang = srclang;
                 track.src = src;
                 if (isDefault) track.default = true;
+                track.addEventListener('load', () => {
+                    this.setTrackStatus(index, 'ready');
+                    this.applyOffset(index);
+                });
+                track.addEventListener('error', () => this.setTrackStatus(index, 'error'));
                 videoElement.appendChild(track);
+                this.trackElements[index] = track;
+            });
+        },
+        setTrackStatus(index, status) {
+            const track = this.subtitleTracks[index];
+            if (track) track.status = status;
+        },
+        // Mirrors the subtitles Plyr shows (its CC button and the C key change them too)
+        syncCaptions() {
+            if (!this.player) return;
+            this.currentTrack = this.player.currentTrack;
+
+            const track = this.subtitleTracks[this.currentTrack];
+            if (!track) return;
+            this.subtitleOffset = this.offsetFor(track.language);
+            const element = this.trackElements[this.currentTrack];
+            // Selecting a track makes the browser download it
+            if (element && element.readyState < 2 && track.status !== 'error') track.status = 'loading';
+        },
+        selectTrack(index) {
+            if (!this.player) return;
+            this.player.currentTrack = index;
+            this.syncCaptions();
+        },
+        offsetFor(language) {
+            if (!(language in this.offsets)) this.offsets[language] = loadOffset(this.movie.imdb_code, language);
+            return this.offsets[language];
+        },
+        setOffset(offset) {
+            const track = this.subtitleTracks[this.currentTrack];
+            if (!track) return;
+            this.subtitleOffset = offset;
+            this.offsets[track.language] = offset;
+            saveOffset(this.movie.imdb_code, track.language, offset);
+            this.applyOffset(this.currentTrack);
+        },
+        applyOffset(index) {
+            const element = this.trackElements[index];
+            const track = this.subtitleTracks[index];
+            if (!element || !track) return;
+            shiftCues(element.track, this.offsetFor(track.language));
+        },
+        setSubtitleStyle(style) {
+            this.subtitleStyle = style;
+            saveStyle(style);
+        },
+        setSpeed(speed) {
+            const videoElement = this.$refs.video;
+            videoElement.defaultPlaybackRate = speed;
+            if (this.player) {
+                this.player.speed = speed;
+            } else {
+                videoElement.playbackRate = speed;
+            }
+            this.speed = speed;
+        },
+        toggleSettings() {
+            this.settingsOpen = !this.settingsOpen;
+            if (this.settingsOpen) this.$nextTick(() => this.fitSettings());
+        },
+        // The panel opens above the control bar and may not grow taller than the player
+        fitSettings() {
+            const container = this.$refs.videoContainer;
+            if (!container || !this.settingsSlot) return;
+            const room = this.settingsSlot.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
+            container.style.setProperty('--settings-max-height', `${Math.max(180, Math.round(room))}px`);
+        },
+        closeSettingsOutside(event) {
+            if (this.settingsOpen && this.settingsSlot && !this.settingsSlot.contains(event.target)) {
+                this.settingsOpen = false;
+            }
+        },
+        // A click doesn't move the focus onto the player's buttons, so Space can't press them again
+        keepFocus(event) {
+            if (event.target.closest('button, [role="slider"]')) event.preventDefault();
+        },
+        // Plyr's seek and volume sliders do take the focus while they're dragged, so it's dropped afterwards
+        dropFocus() {
+            setTimeout(() => {
+                const focused = document.activeElement;
+                const container = this.$refs.videoContainer;
+                if (focused && container && focused !== document.body && container.contains(focused)) focused.blur();
+            });
+        },
+        // Runs before Plyr's own shortcuts. Space always plays or pauses the movie: a focused button or link
+        // loses the focus first, so it doesn't get pressed instead.
+        handleKey(event) {
+            if (this.showResetDialog || event.defaultPrevented) return;
+
+            if (event.key === 'Escape' && this.settingsOpen) {
+                event.preventDefault();
+                this.settingsOpen = false;
+                return;
+            }
+
+            if (event.key !== ' ' || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+            const focused = document.activeElement;
+            // Typing in the search bar
+            if (focused && focused.matches('input:not([type="range"]), textarea, select, [contenteditable]')) return;
+
+            if (!this.start) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat && this.selectedTorrent && !this.showTorrents) this.startMovie();
+                return;
+            }
+
+            if (focused && focused !== document.body && focused.blur) focused.blur();
+
+            // Without Plyr (small screens) the browser's own player doesn't listen to the keyboard
+            if (!this.player) {
+                event.preventDefault();
+                const videoElement = this.$refs.video;
+                if (!event.repeat && videoElement) {
+                    if (videoElement.paused) {
+                        videoElement.play().catch(() => {});
+                    } else {
+                        videoElement.pause();
+                    }
+                }
             }
         },
         async selectTorrent(torrentHash) {
@@ -369,7 +741,28 @@ export default {
             if (!this.start) {
                 this.startMovie();
             } else if (switching || this.loadError) {
+                this.recoveries = 0;
                 this.loadVideo(position);
+            }
+        },
+        // The reset brought the latest details and torrents. The movie keeps playing unless its torrent is gone.
+        onReset({ movie, details }) {
+            const previous = this.selectedTorrent;
+            this.movie = movie;
+            if (details !== undefined) {
+                this.details = details;
+                movieDetails.set(movie.imdb_code, details);
+            }
+
+            const torrents = movie.torrents || [];
+            if (!torrents.length || torrents.some(torrent => torrent.hash === previous)) return;
+
+            const torrent = bestTorrent(torrents);
+            if (this.start) {
+                this.chooseTorrent(torrent.hash);
+            } else {
+                this.showTorrents = false;
+                this.selectTorrent(torrent.hash);
             }
         },
         resumePosition(progress) {
@@ -394,7 +787,7 @@ export default {
                 // Bigger jumps are seeks, not watching
                 if (delta > 0 && delta < 3) {
                     this.unsavedWatch += delta;
-                    this.watchedThisVisit += delta;
+                    this.lastDataAt = Date.now();
                 }
             }
             this.lastTime = time;
@@ -412,127 +805,65 @@ export default {
         },
         progressPayload() {
             const videoElement = this.$refs.video;
-            if (!videoElement || !this.start || !this.movie) return null;
+            // Nothing is saved before the movie has really played on this visit
+            if (!videoElement || !this.start || !this.movie || !this.everPlayed) return null;
 
-            const duration = videoElement.duration;
-            if (!Number.isFinite(duration) || duration <= 0) return null;
-            if (!this.savedProgress && this.watchedThisVisit < MIN_WATCH_SECONDS) return null;
+            // While the stream loads again its duration is unknown for a moment, the last one is still right
+            const duration = Number.isFinite(videoElement.duration) && videoElement.duration > 0 ? videoElement.duration : this.duration;
+            if (!duration) return null;
 
             const position = this.pendingSeek !== null ? this.pendingSeek : videoElement.currentTime;
             const moved = this.lastSavedPosition === null || Math.abs(position - this.lastSavedPosition) >= 1;
             if (!moved && this.unsavedWatch < 0.5) return null;
 
-            return { position, duration, watched: this.unsavedWatch };
+            return { position: Math.min(position, duration), duration, watched: this.unsavedWatch };
         },
         saveProgress({ beacon = false } = {}) {
             const payload = this.progressPayload();
             if (!payload) return;
 
+            const imdbCode = this.movie.imdb_code;
             this.unsavedWatch = 0;
             this.lastSavedPosition = payload.position;
 
             // A normal request can be cancelled when the page is closing, a beacon can't
             if (beacon && navigator.sendBeacon) {
                 const body = new Blob([JSON.stringify({ ...payload, token: session.token })], { type: 'text/plain' });
-                if (navigator.sendBeacon(`${API_URL}/history/${this.movie.imdb_code}`, body)) {
+                if (navigator.sendBeacon(`${API_URL}/history/${imdbCode}`, body)) {
                     this.savedProgress = this.savedProgress || payload;
                     return;
                 }
             }
 
-            api.put(`/history/${this.movie.imdb_code}`, payload).then((response) => {
+            // Saves of the same movie go out one after another, so an older position never wins
+            watchHistory.save(imdbCode, payload).then((response) => {
                 this.savedProgress = this.savedProgress || payload;
                 // Watching the movie to the end took it off the watchlist
                 if (response.data && response.data.removedFromWatchlist) {
-                    watchlist.forget(this.movie.imdb_code);
+                    watchlist.forget(imdbCode);
                 }
             }).catch(() => {
                 // Count this time again with the next save
                 this.unsavedWatch += payload.watched;
                 this.lastSavedPosition = null;
             });
-        },
-        openSubtitleSettings(event) {
-            // Without this, Space would reopen the settings instead of pausing the movie
-            event.currentTarget.blur();
-            this.showSubtitleSettings = true;
-        },
-        async resetMovie() {
-            // Ask if user is sure
-            if(!confirm('Are you sure you want to reset the movie? \nThis will reset the movie information and torrents.')) {
-                return;
-            }
-
-            try {
-                const response = await api.post('/reset-movie', {
-                    imdb_code: this.movie.imdb_code
-                });
-
-                alert(response.data.message || 'Movie reset successfully!');
-                window.location.reload();
-            } catch (error) {
-                const data = error.response ? error.response.data : null;
-                alert(`There was an error! \n${(data && (data.message || data.error)) || data || 'An error occurred'}`);
-            }
-        },
-        changeFontSize(delta) {
-            this.subtitleSettings.fontSize = Math.max(0.5, Math.min(2.0, this.subtitleSettings.fontSize + delta));
-            this.applySubtitleSettings();
-        },
-
-        changeBackgroundOpacity(delta) {
-            this.subtitleSettings.bgOpacity = Math.max(0, Math.min(1, this.subtitleSettings.bgOpacity + delta));
-            this.applySubtitleSettings();
-        },
-
-        applySubtitleSettings() {
-            if (!this.player) return;
-
-            // Save settings to localStorage
-            localStorage.setItem('subtitleSettings', JSON.stringify(this.subtitleSettings));
-
-            // Apply settings through CSS
-            const fontSize = this.subtitleSettings.fontSize * 1.8; // Base size is 1.8rem
-            const bgOpacity = this.subtitleSettings.bgOpacity;
-            const color = this.subtitleSettings.color;
-
-            const styleEl = document.getElementById('plyr-subtitle-styles') || document.createElement('style');
-            styleEl.id = 'plyr-subtitle-styles';
-            styleEl.innerHTML = `
-                .plyr__captions {
-                    font-size: ${fontSize}rem !important;
-                    color: ${color} !important;
-                    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7) !important;
-                }
-                .plyr__captions span {
-                    background-color: rgba(0, 0, 0, ${bgOpacity}) !important;
-                    padding: 2px 8px !important;
-                }
-            `;
-
-            if (!document.getElementById('plyr-subtitle-styles')) {
-                document.head.appendChild(styleEl);
-            }
-        },
-
-        loadSavedSubtitleSettings() {
-            const savedSettings = localStorage.getItem('subtitleSettings');
-            if (savedSettings) {
-                try {
-                    this.subtitleSettings = JSON.parse(savedSettings);
-                } catch (e) {
-                    console.error('Error parsing saved subtitle settings', e);
-                }
-            }
         }
     },
     beforeUnmount() {
         // Save where we stopped before the video goes away
         this.saveProgress();
+        this.destroyed = true;
 
         clearInterval(this.saveTimer);
+        clearInterval(this.streamTimer);
+        if (this.stopReconnect) this.stopReconnect();
         if (this.onPageHide) window.removeEventListener('pagehide', this.onPageHide);
         if (this.onVisibilityChange) document.removeEventListener('visibilitychange', this.onVisibilityChange);
+        window.removeEventListener('keydown', this.onKeydown, true);
+        window.removeEventListener('pointerup', this.onPointerUp, true);
+        window.removeEventListener('pointerdown', this.onPointerDown, true);
+        window.removeEventListener('resize', this.onResize);
+        document.removeEventListener('fullscreenchange', this.onResize);
 
         const videoElement = this.$refs.video;
         if (videoElement && this.videoListeners) {
@@ -627,6 +958,7 @@ export default {
     font-weight: 600;
 }
 
+/* Subtitles are sized from the player's width (cqw), so they grow with it in fullscreen */
 .video-container {
     --plyr-color-main: #e9c37b;
     position: relative;
@@ -636,6 +968,23 @@ export default {
     overflow: hidden;
     background: #000;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    container-type: inline-size;
+}
+
+.video-container:fullscreen {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.video-container:-webkit-full-screen {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .video-container :deep(.plyr),
@@ -646,9 +995,23 @@ export default {
     height: 100%;
 }
 
+/* Without Plyr's own stacking context its control bar, and the settings panel in it, can sit above the
+   buffering spinner */
+.video-container :deep(.plyr) {
+    z-index: auto;
+}
+
 .video-container video {
     object-fit: contain;
     background: #000;
+}
+
+.video-container :deep(.plyr__captions) {
+    font-size: calc(clamp(16px, 2.6cqw, 60px) * var(--caption-scale, 1));
+}
+
+.video-container :deep(.plyr__caption) {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
 }
 
 /* Before the movie starts, the backdrop fills the player and our own play button replaces Plyr's */
@@ -679,10 +1042,19 @@ export default {
     background: linear-gradient(180deg, rgba(5, 6, 12, 0.25) 0%, rgba(5, 6, 12, 0.7) 100%);
 }
 
-/* The spinner shows over the video while it buffers; the player controls stay usable */
+/* The spinner shows over the video while it buffers; the player controls stay above it and usable */
 .overlay.loading {
+    z-index: 2;
     background: rgba(0, 0, 0, 0.35);
     pointer-events: none;
+}
+
+.overlay-note {
+    max-width: 40ch;
+    margin: 4px 0 0;
+    font-size: 1rem;
+    font-weight: 600;
+    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7);
 }
 
 .overlay.failed {
@@ -758,21 +1130,119 @@ export default {
     cursor: pointer;
 }
 
-.movie-info {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+/* The settings panel grows out of the gear */
+.settings-enter-active {
+    transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.settings-leave-active {
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.settings-enter-from,
+.settings-leave-to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+}
+
+.about {
     margin-top: 24px;
-    margin-bottom: 18px;
+}
+
+.facts-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px 24px;
+}
+
+.facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 18px;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 1.05rem;
+}
+
+.rating {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text);
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.rating svg {
+    width: 24px;
+    height: 24px;
+    fill: var(--accent);
+}
+
+/* The age rating, outlined like on a poster */
+.certification {
+    padding: 1px 7px;
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+}
+
+.links {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.trailer-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 14px 0 10px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.trailer-button:hover {
+    background: var(--surface-hover);
+    border-color: rgba(255, 255, 255, 0.36);
+}
+
+.trailer-button svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linejoin: round;
+}
+
+.trailer-button svg path {
+    fill: currentColor;
+    stroke: none;
 }
 
 .imdb-button {
-    background-color: #f5c518;
-    padding: 4px 8px;
-    border-radius: 6px;
     display: flex;
     align-items: center;
-    transition: all 0.3s ease;
+    height: 34px;
+    padding: 0 8px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    background-color: #f5c518;
+    transition: filter 0.2s ease;
 }
 
 .imdb-button:hover {
@@ -784,30 +1254,15 @@ export default {
     width: auto;
 }
 
-.rating {
-    margin: 0;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 6px;
-    font-size: 1.3rem;
-    font-weight: 600;
-}
-
-.rating svg {
-    width: 24px;
-    height: 24px;
-    fill: var(--accent);
-}
-
-.year, .genres {
-    font-size: 1.1rem;
-    margin: 0 0 6px;
-    color: var(--text-muted);
+.tagline {
+    margin: 22px 0 0;
+    color: #cdd0dc;
+    font-size: 1.15rem;
+    font-style: italic;
 }
 
 .summary {
-    margin-top: 28px;
+    margin-top: 22px;
 }
 
 .summary > h2 {
@@ -824,122 +1279,56 @@ export default {
     line-height: 1.65;
 }
 
-.resetMovie {
-    margin: 40px 0 0;
-    padding: 10px 20px;
-    font-size: 1rem;
-    color: var(--danger);
-    background-color: transparent;
-    border: 1px solid rgba(229, 115, 107, 0.5);
-    border-radius: 10px;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
+.extras {
+    margin-top: 30px;
 }
 
-.resetMovie:hover {
-    background-color: rgba(229, 115, 107, 0.12);
+.reset-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 18px;
+    margin-top: 44px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
 }
 
-.subtitle-settings-btn {
-    margin-top: 14px;
-    padding: 8px 16px;
-    background-color: var(--surface);
+.reset-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 42px;
+    padding: 0 18px 0 14px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 12px;
+    background: var(--surface);
     color: var(--text);
-    border: 1px solid var(--line);
-    border-radius: 18px;
+    font-size: 0.98rem;
+    font-weight: 600;
     cursor: pointer;
-    font-size: 14px;
-    transition: background-color 0.2s ease;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
-.subtitle-settings-btn:hover {
-    background-color: var(--surface-hover);
+.reset-button:hover {
+    background: var(--surface-hover);
+    border-color: rgba(255, 255, 255, 0.36);
 }
 
-.subtitle-settings-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.7);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
+.reset-button svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
-.subtitle-settings-container {
-    background-color: var(--bg-elevated);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 20px;
-    width: 90%;
-    max-width: 400px;
-}
-
-.subtitle-settings-container h3 {
-    margin-top: 0;
-    text-align: center;
-    margin-bottom: 20px;
-}
-
-.setting-group {
-    margin-bottom: 20px;
-}
-
-.setting-group label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: bold;
-}
-
-.setting-controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-}
-
-.setting-controls button {
-    width: 40px;
-    height: 40px;
-    font-size: 18px;
-    background-color: var(--surface-strong);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-}
-
-.color-options {
-    display: flex;
-    justify-content: space-between;
-}
-
-.color-option {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    cursor: pointer;
-    border: 2px solid transparent;
-}
-
-.color-option.active {
-    border-color: #fff;
-    box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
-}
-
-.close-btn {
-    display: block;
-    width: 100%;
-    padding: 10px;
-    background-color: var(--surface-strong);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    margin-top: 10px;
+.reset-hint {
+    flex: 1 1 260px;
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 0.92rem;
 }
 
 @media (max-width: 640px) {
@@ -950,6 +1339,10 @@ export default {
     .play-button {
         width: 72px;
         height: 72px;
+    }
+
+    .facts {
+        gap: 6px 14px;
     }
 }
 </style>

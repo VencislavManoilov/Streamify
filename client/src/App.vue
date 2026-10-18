@@ -1,15 +1,18 @@
 <template>
   <LoadingSpinner v-if="!ready" overlay label="Loading Streamify" />
   <router-view v-else />
+  <ToastHost />
 </template>
 
 <script>
 import LoadingSpinner from './components/LoadingSpinner.vue';
+import ToastHost from './components/ToastHost.vue';
 
 export default {
   name: 'App',
   components: {
-    LoadingSpinner
+    LoadingSpinner,
+    ToastHost
   },
   data() {
     return {

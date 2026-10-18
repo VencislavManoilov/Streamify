@@ -186,27 +186,13 @@ app.use('/history', withKnex, historyRoute);
 const watchlistRoute = require('./routes/watchlist');
 app.use('/watchlist', withKnex, watchlistRoute);
 
-app.get("/movies", withKnex, Authorization, (req, res) => {
-    knex('movies').select('*').limit(15).then(movies => {
-        res.json({ movies });
-    }).catch(err => {
-        res.status(500).json({ error: err.message });
-    });
-});
-
-app.get("/movies/:imdb_code", withKnex, Authorization, (req, res) => {
-    const { imdb_code } = req.params;
-
-    knex('movies').where({ imdb_code }).first().then(movie => {
-        if (!movie) {
-            return res.status(404).json({ error: "Movie not found" });
-        }
-
-        res.json({ movie });
-    }).catch(err => {
-        res.status(500).json({ error: err.message });
-    });
-});
+const moviesRoute = require('./routes/movies');
+app.use('/movies', (req, res, next) => {
+    req.knex = knex;
+    req.tmdb = tmdb;
+    req.uploadMovie = uploadMovie;
+    next();
+}, moviesRoute);
 
 app.get("/categories", withKnex, Authorization, (req, res) => {
     try {
@@ -215,28 +201,6 @@ app.get("/categories", withKnex, Authorization, (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 });
-
-app.post("/reset-movie", withKnex, Authorization, async (req, res) => {
-    const { imdb_code } = req.body;
-
-    try {
-        const existingMovie = await knex('movies').where({ imdb_code }).first();
-        if (!existingMovie) {
-            return res.status(404).json({ error: "Movie not found" });
-        }
-
-        const movie = await yts.getMovieDetails(imdb_code);
-        if(movie) {
-            await uploadMovie(movie, "yts");
-            return res.json({ message: "Movie reset successfully", movie });
-        }
-
-        return res.status(404).json({ error: "Movie not found" });
-    } catch (error) {
-        logger.error(error);
-        res.status(500).json({ error: "Failed to fetch movies" });
-    }
-})
 
 app.get("/preload/:imdb_code/:torrent_hash", withKnex, Authorization, async (req, res) => {
     const { imdb_code, torrent_hash } = req.params;

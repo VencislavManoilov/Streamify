@@ -7,7 +7,10 @@
 
             <div class="scroll">
                 <div class="hero" :style="{ backgroundImage: movie.background_image ? `url(${movie.background_image})` : 'none' }">
-                    <h1 class="title" :id="titleId">{{ movie.title }}</h1>
+                    <div class="headline">
+                        <h1 class="title" :id="titleId">{{ movie.title }}</h1>
+                        <p v-if="details && details.tagline" class="tagline">{{ details.tagline }}</p>
+                    </div>
                 </div>
 
                 <div class="content">
@@ -23,6 +26,10 @@
                                 <a :href="'https://www.imdb.com/title/' + movie.imdb_code" target="_blank" rel="noopener noreferrer" class="imdb-button" aria-label="Open on IMDb">
                                     <img src="https://upload.wikimedia.org/wikipedia/commons/6/69/IMDB_Logo_2016.svg" alt="IMDb">
                                 </a>
+                                <a v-if="trailerUrl" :href="trailerUrl" target="_blank" rel="noopener noreferrer" class="trailer-button" aria-label="Watch the trailer" title="Watch the trailer on YouTube">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 8.8v6.4l5.2-3.2z" /><circle cx="12" cy="12" r="8.6" /></svg>
+                                    <span>Trailer</span>
+                                </a>
                             </div>
                         </div>
 
@@ -33,6 +40,7 @@
                             </span>
                             <span v-if="movie.year">{{ movie.year }}</span>
                             <span v-if="runtime">{{ runtime }}</span>
+                            <span v-if="details && details.certification" class="certification" :title="`Rated ${details.certification}`">{{ details.certification }}</span>
                         </p>
                         <p v-if="genres" class="genres">{{ genres }}</p>
                     </div>
@@ -40,6 +48,8 @@
                     <img :src="movie.medium_cover_image" alt="" class="cover" />
 
                     <p class="summary">{{ movie.summary || 'No description available.' }}</p>
+
+                    <MovieExtras class="more" :details="details" :loading="detailsLoading" variant="card" />
                 </div>
             </div>
         </article>
@@ -47,6 +57,8 @@
 </template>
 
 <script>
+import { movieDetails, formatRuntime } from '../movieDetails';
+import MovieExtras from './MovieExtras.vue';
 import WatchlistButton from './WatchlistButton.vue';
 
 let instances = 0;
@@ -54,6 +66,7 @@ let instances = 0;
 export default {
     name: 'MovieDetails',
     components: {
+        MovieExtras,
         WatchlistButton
     },
     props: {
@@ -66,19 +79,30 @@ export default {
     data() {
         instances += 1;
         return {
-            titleId: `movie-details-title-${instances}`
+            titleId: `movie-details-title-${instances}`,
+            details: null,
+            detailsLoading: true
         };
     },
     computed: {
         runtime() {
-            const minutes = Number(this.movie.runtime);
-            if (!minutes) return '';
-            const hours = Math.floor(minutes / 60);
-            return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+            return formatRuntime(this.movie.runtime);
         },
         genres() {
             return (this.movie.genres || []).join(', ');
+        },
+        trailerUrl() {
+            const trailer = this.details && this.details.trailer;
+            return trailer ? `https://www.youtube.com/watch?v=${encodeURIComponent(trailer.key)}` : '';
         }
+    },
+    created() {
+        // The card works without them, so a failed lookup only leaves the extra section out
+        movieDetails.load(this.movie.imdb_code).then((details) => {
+            this.details = details;
+        }).catch(() => {}).finally(() => {
+            this.detailsLoading = false;
+        });
     },
     mounted() {
         // Keep the page behind the card from scrolling
@@ -167,17 +191,29 @@ export default {
     background: linear-gradient(to top, var(--bg-elevated) 0%, rgba(16, 18, 29, 0.55) 45%, rgba(16, 18, 29, 0) 75%);
 }
 
-.title {
+.headline {
     position: relative;
     z-index: 1;
-    margin: 0;
     padding-right: 204px;
+}
+
+.title {
+    margin: 0;
     font-size: clamp(1.9rem, 4.2vw, 2.8rem);
     font-weight: 800;
     font-stretch: 115%;
     line-height: 1.05;
     letter-spacing: -0.01em;
     text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
+}
+
+.tagline {
+    margin: 8px 0 0;
+    color: rgba(236, 238, 246, 0.82);
+    font-size: 1.05rem;
+    font-style: italic;
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
+    animation: fade-in 0.4s ease;
 }
 
 .content {
@@ -248,6 +284,7 @@ export default {
 
 .more-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
 }
 
@@ -299,6 +336,40 @@ export default {
     width: auto;
 }
 
+.trailer-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 18px 0 14px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 600;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.trailer-button:hover {
+    background: var(--surface-hover);
+    border-color: rgba(255, 255, 255, 0.36);
+}
+
+.trailer-button svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linejoin: round;
+}
+
+.trailer-button svg path {
+    fill: currentColor;
+    stroke: none;
+}
+
 .facts {
     display: flex;
     flex-wrap: wrap;
@@ -323,6 +394,18 @@ export default {
     fill: var(--accent);
 }
 
+/* The age rating, outlined like on a poster */
+.certification {
+    padding: 1px 7px;
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+}
+
 .genres {
     margin: 0;
     color: var(--text-muted);
@@ -339,6 +422,14 @@ export default {
     line-height: 1.65;
 }
 
+.more {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin-top: 26px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+}
+
 @keyframes card-in {
     from {
         opacity: 0;
@@ -346,8 +437,15 @@ export default {
     }
 }
 
+@keyframes fade-in {
+    from {
+        opacity: 0;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .movie-details {
+    .movie-details,
+    .tagline {
         animation: none;
     }
 }
@@ -369,8 +467,11 @@ export default {
         padding: 72px 16px 16px;
     }
 
-    .title {
+    .headline {
         padding-right: 0;
+    }
+
+    .title {
         font-size: 1.8rem;
     }
 
@@ -392,6 +493,17 @@ export default {
     .play-button {
         flex: 1;
         justify-content: center;
+    }
+
+    /* Just the icon, so the buttons fit next to the poster */
+    .trailer-button {
+        width: 48px;
+        padding: 0;
+        justify-content: center;
+    }
+
+    .trailer-button span {
+        display: none;
     }
 }
 </style>

@@ -37,19 +37,23 @@
             </MovieList>
 
             <p v-if="historyError" class="message">{{ historyError }}</p>
-            <MovieList v-else-if="history.length" :category="historyRow" />
-            <section v-else class="empty">
-                <h2>Watch history</h2>
-                <p>The movies you watch will show up here, most recent first.</p>
-                <router-link to="/" class="browse">Browse movies</router-link>
-            </section>
+            <MovieList v-else :category="historyRow" remove-label="Remove from watch history" @remove="removeFromHistory">
+                <template #empty>
+                    <div class="empty">
+                        <p>The movies you watch will show up here, most recent first.</p>
+                        <router-link to="/" class="browse">Browse movies</router-link>
+                    </div>
+                </template>
+            </MovieList>
         </main>
     </div>
 </template>
 
 <script>
 import api from '../api';
+import { notifications } from '../notifications';
 import { session } from '../session';
+import { watchHistory } from '../watchHistory';
 import { watchlist } from '../watchlist';
 import AppHeader from './AppHeader.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
@@ -97,6 +101,9 @@ export default {
         // A rejected session already sends the user to the login page
         const loggedOut = err => !!err.response && err.response.status === 401;
 
+        // The movie that was just left may still be saving its progress
+        await watchHistory.settled();
+
         const [history, saved] = await Promise.allSettled([
             api.get('/history'),
             // Asked for again here, since movies finished on another device have left the list
@@ -120,6 +127,61 @@ export default {
         logout() {
             session.logout();
             this.$router.replace({ name: 'Welcome' });
+        },
+        // Changes the statistics by what one entry of the history adds to them (`sign` -1 takes it away)
+        countEntry(progress, sign) {
+            this.stats = {
+                moviesWatched: this.stats.moviesWatched + sign,
+                secondsWatched: Math.max(0, this.stats.secondsWatched + sign * progress.watchedSeconds),
+                moviesFinished: this.stats.moviesFinished + (progress.completed ? sign : 0)
+            };
+        },
+        // The poster goes right away and comes back if the server can't remove it. Undo puts it back.
+        async removeFromHistory(movie) {
+            const index = this.history.findIndex(entry => entry.imdb_code === movie.imdb_code);
+            if (index === -1) return;
+            this.history = this.history.filter(entry => entry.imdb_code !== movie.imdb_code);
+            this.countEntry(movie.progress, -1);
+
+            let removed;
+            try {
+                removed = await watchHistory.remove(movie.imdb_code);
+            } catch (err) {
+                this.putBack(movie, index);
+                if (!err.response || err.response.status !== 401) {
+                    notifications.show({ tone: 'danger', title: "Couldn't remove the movie", message: 'Check your connection and try again.' });
+                }
+                return;
+            }
+
+            notifications.show({
+                id: `history-${movie.imdb_code}`,
+                icon: 'removed',
+                title: 'Removed from your watch history',
+                message: movie.title,
+                duration: 6000,
+                // Nothing to put back when it was already gone from the server
+                action: removed ? { label: 'Undo', handler: () => this.undoRemove(movie, index, removed) } : null
+            });
+        },
+        async undoRemove(movie, index, removed) {
+            this.putBack({ ...movie, progress: removed }, index);
+            try {
+                await watchHistory.restore(movie.imdb_code, removed);
+            } catch (err) {
+                this.history = this.history.filter(entry => entry.imdb_code !== movie.imdb_code);
+                this.countEntry(removed, -1);
+                if (!err.response || err.response.status !== 401) {
+                    notifications.show({ tone: 'danger', title: "Couldn't put the movie back", message: 'Check your connection and try again.' });
+                }
+            }
+        },
+        putBack(movie, index) {
+            if (this.history.some(entry => entry.imdb_code === movie.imdb_code)) return;
+            const history = this.history.slice();
+            history.splice(Math.min(index, history.length), 0, movie);
+            this.history = history;
+            this.countEntry(movie.progress, 1);
         }
     }
 };
@@ -229,13 +291,6 @@ export default {
 
 .empty {
     padding: 0 var(--gutter);
-}
-
-.empty h2 {
-    margin: 0 0 8px;
-    font-size: 1.3rem;
-    font-weight: 700;
-    font-stretch: 112%;
 }
 
 .empty p {

@@ -137,4 +137,57 @@ async function saveProgress(req, res) {
 router.put('/:imdb_code', saveProgress);
 router.post('/:imdb_code', saveProgress);
 
+// Takes a movie off the watch history. The removed entry comes back in the answer, so it can be undone.
+router.delete('/:imdb_code', async (req, res) => {
+    try {
+        const [row] = await req.knex('watch_history')
+            .where({ user_id: req.user.id, imdb_code: req.params.imdb_code })
+            .del()
+            .returning('*');
+
+        res.json({ removed: row ? toProgress(row) : null });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to remove the movie from the watch history' });
+    }
+});
+
+// Puts back an entry that was just removed (the undo of the route above)
+router.post('/:imdb_code/restore', async (req, res) => {
+    const { imdb_code } = req.params;
+    const duration = Number(req.body.duration);
+    const position = Number(req.body.position);
+    const watchedSeconds = Number(req.body.watchedSeconds);
+    const lastWatchedAt = new Date(req.body.lastWatchedAt);
+
+    if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position) || position < 0
+        || !Number.isFinite(watchedSeconds) || watchedSeconds < 0) {
+        return res.status(400).json({ error: 'Position, duration and the watched time are required' });
+    }
+
+    try {
+        const movie = await req.knex('movies').where({ imdb_code }).first('imdb_code');
+        if (!movie) {
+            return res.status(404).json({ error: 'Movie not found' });
+        }
+
+        // Watching the movie again in the meantime started a new entry, which is kept
+        await req.knex('watch_history')
+            .insert({
+                user_id: req.user.id,
+                imdb_code,
+                position: Math.min(position, duration),
+                duration,
+                watched_seconds: watchedSeconds,
+                completed: req.body.completed === true,
+                last_watched_at: lastWatchedAt.getTime() <= Date.now() ? lastWatchedAt : req.knex.fn.now()
+            })
+            .onConflict(['user_id', 'imdb_code'])
+            .ignore();
+
+        res.status(204).end();
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to put the movie back in the watch history' });
+    }
+});
+
 module.exports = router;

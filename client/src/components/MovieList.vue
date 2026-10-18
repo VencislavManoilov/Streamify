@@ -3,9 +3,13 @@
         <h2 class="row-title">{{ category.name }}</h2>
         <!-- Stays in the row instead of replacing it, so an open card doesn't close when the last movie goes -->
         <slot v-if="!category.movies.length" name="empty" />
-        <div class="row-viewport">
-            <div class="movies"
+        <div class="row-viewport" :class="{ 'more-left': canScrollLeft, 'more-right': canScrollRight }">
+            <!-- Posters that leave the row (or come back to it) fold in and out instead of jumping -->
+            <TransitionGroup
                 ref="track"
+                tag="div"
+                name="poster"
+                class="movies"
                 @mousedown="startDrag($event)"
                 @mousemove="onDrag($event)"
                 @mouseup="stopDrag"
@@ -16,16 +20,28 @@
                 @touchcancel="stopDrag"
                 @wheel="handleWheel"
                 @scroll.passive="updateEdges"
+                @after-enter="updateEdges"
+                @after-leave="updateEdges"
             >
                 <div v-for="movie in category.movies" :key="movie.imdb_code" class="movie">
-                    <button type="button" :aria-label="posterLabel(movie)" @click="movieClick(movie, $event)">
+                    <button type="button" class="poster" :aria-label="posterLabel(movie)" @click="movieClick(movie, $event)">
                         <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" loading="lazy" draggable="false" />
                         <span v-if="movie.progress" class="progress" aria-hidden="true">
                             <span class="progress-fill" :style="{ width: progressPercent(movie) + '%' }"></span>
                         </span>
                     </button>
+                    <button
+                        v-if="removeLabel"
+                        type="button"
+                        class="remove"
+                        :aria-label="`${removeLabel}: ${movie.title}`"
+                        :title="removeLabel"
+                        @click="removeClick(movie, $event)"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" /></svg>
+                    </button>
                 </div>
-            </div>
+            </TransitionGroup>
 
             <div class="edge left" :class="{ visible: canScrollLeft }">
                 <button type="button" class="edge-arrow" aria-label="Scroll left" @click="scrollStep(-1)">
@@ -69,8 +85,14 @@ export default {
         };
     },
     props: {
-        category: Object
+        category: Object,
+        // Gives every poster a button that asks the page to take the movie out of the row
+        removeLabel: {
+            type: String,
+            default: ''
+        }
     },
+    emits: ['remove'],
     components: {
         MovieDetails
     },
@@ -81,16 +103,20 @@ export default {
     },
     mounted() {
         this.resizeObserver = new ResizeObserver(() => this.updateEdges());
-        this.resizeObserver.observe(this.$refs.track);
+        this.resizeObserver.observe(this.trackElement());
         this.updateEdges();
     },
     methods: {
+        // The scrolling row of posters (the element the transition group renders)
+        trackElement() {
+            return this.$refs.track ? this.$refs.track.$el : null;
+        },
         startDrag(e) {
             // Cancel any ongoing inertia scrolling
             this.cancelInertia();
 
             this.isDragging = true;
-            const container = this.$refs.track;
+            const container = this.trackElement();
             if (!container) return;
             const pageX = e.touches ? e.touches[0].pageX : e.pageX;
             this.startX = pageX - container.offsetLeft;
@@ -107,7 +133,7 @@ export default {
             if (!e.touches) {
                 e.preventDefault();
             }
-            const container = this.$refs.track;
+            const container = this.trackElement();
             if (!container) return;
             const pageX = e.touches ? e.touches[0].pageX : e.pageX;
             const x = pageX - container.offsetLeft;
@@ -140,7 +166,7 @@ export default {
             }
         },
         startInertiaScroll() {
-            const container = this.$refs.track;
+            const container = this.trackElement();
             if (!container) return;
 
             // Initial velocity from drag (pixels per ms)
@@ -176,20 +202,27 @@ export default {
                 this.scrollAnimationId = null;
             }
         },
-        movieClick(movie, event) {
-            // Prevent selecting a movie if we recently stopped dragging
+        // A click that ends a drag of the row isn't meant for the poster under the pointer
+        endsDrag(event) {
             const timeSinceDrag = Date.now() - this.lastDragTime;
             if (this.clickPrevented || timeSinceDrag < 300) {
                 event.preventDefault();
                 event.stopPropagation();
                 this.clickPrevented = false;
-                return;
+                return true;
             }
-
+            return false;
+        },
+        movieClick(movie, event) {
+            if (this.endsDrag(event)) return;
             this.selectedMovie = movie;
         },
+        removeClick(movie, event) {
+            if (this.endsDrag(event)) return;
+            this.$emit('remove', movie);
+        },
         handleWheel(e) {
-            const container = this.$refs.track;
+            const container = this.trackElement();
             if (!container) return;
 
             // Cancel any ongoing inertia scrolling on manual wheel input
@@ -205,7 +238,7 @@ export default {
         },
         // Moves the row by about three posters (less on small screens)
         scrollStep(direction) {
-            const container = this.$refs.track;
+            const container = this.trackElement();
             if (!container) return;
             this.cancelInertia();
 
@@ -219,7 +252,7 @@ export default {
             if (this.edgeFrame) return;
             this.edgeFrame = requestAnimationFrame(() => {
                 this.edgeFrame = null;
-                const container = this.$refs.track;
+                const container = this.trackElement();
                 if (!container) return;
                 const maxScroll = container.scrollWidth - container.clientWidth;
                 this.canScrollLeft = container.scrollLeft > 2;
@@ -247,11 +280,27 @@ export default {
 </script>
 
 <style scoped>
+/* Lengths that can be animated, so the fades at the ends of a row grow in and out smoothly */
+@property --fade-left {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}
+
+@property --fade-right {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+}
+
 .row {
     margin-bottom: 28px;
 }
 
+/* Above the dims at the ends of the rows, which reach a bit over and under their row */
 .row-title {
+    position: relative;
+    z-index: 2;
     margin: 0 0 12px;
     padding: 0 var(--gutter);
     font-size: 1.3rem;
@@ -261,9 +310,11 @@ export default {
 }
 
 .row-viewport {
+    --fade: 150px;
     position: relative;
 }
 
+/* The posters fade out toward an end that has more posters behind it, instead of being cut off there */
 .movies {
     display: flex;
     flex-direction: row;
@@ -276,10 +327,21 @@ export default {
     -ms-overflow-style: none; /* IE and Edge */
     -webkit-overflow-scrolling: touch;
     cursor: grab;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-left), #000 calc(100% - var(--fade-right)), transparent 100%);
+    transition: --fade-left 0.35s ease, --fade-right 0.35s ease;
 
     /* Hardware acceleration for smoother scrolling */
     transform: translateZ(0);
     will-change: transform;
+}
+
+.more-left .movies {
+    --fade-left: var(--fade);
+}
+
+.more-right .movies {
+    --fade-right: var(--fade);
 }
 
 /* Hide scrollbar for Chrome, Safari and Opera */
@@ -292,11 +354,12 @@ export default {
 }
 
 .movie {
+    position: relative;
     flex: 0 0 clamp(132px, 34vw, 200px);
     padding: 0;
 }
 
-.movie > button {
+.poster {
     position: relative;
     display: block;
     width: 100%;
@@ -313,11 +376,11 @@ export default {
     transition: filter 0.2s ease;
 }
 
-.movie > button:hover {
+.poster:hover {
     filter: brightness(1.12);
 }
 
-.movie > button:focus-visible {
+.poster:focus-visible {
     outline-offset: -2px;
     outline-width: 3px;
 }
@@ -353,38 +416,106 @@ export default {
     background: var(--accent);
 }
 
-/* Dark fades over the ends of the row with an arrow, shown only when there are more posters that way */
+/* Shows up on the poster under the pointer; always there on touch screens, which have no hover */
+.remove {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 50%;
+    background: rgba(8, 9, 16, 0.62);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(0.85);
+    transition: opacity 0.2s ease, transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.movie:hover .remove,
+.remove:focus-visible {
+    opacity: 1;
+    transform: none;
+}
+
+.remove:hover {
+    background: rgba(225, 29, 72, 0.92);
+    border-color: transparent;
+}
+
+.remove:active {
+    transform: scale(0.92);
+}
+
+.remove svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    stroke-linecap: round;
+}
+
+@media (hover: none) {
+    .remove {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* A poster that leaves folds away and the ones after it slide over; one that comes back unfolds */
+.poster-enter-active,
+.poster-leave-active {
+    transition: flex-basis 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin-right 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, transform 0.4s ease;
+}
+
+.poster-enter-from,
+.poster-leave-to {
+    flex-basis: 0;
+    margin-right: -12px;
+    opacity: 0;
+    transform: scale(0.85);
+}
+
+/* A soft dim behind the arrow at an end with more posters. It reaches over and under the row and fades
+   out in every direction, so it never shows an edge of its own. */
 .edge {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 168px;
+    top: -56px;
+    bottom: -56px;
+    width: 230px;
     display: flex;
     align-items: center;
     pointer-events: none;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.25s ease, visibility 0s linear 0.25s;
+    transition: opacity 0.35s ease, visibility 0s linear 0.35s;
 }
 
 .edge.visible {
     opacity: 1;
     visibility: visible;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.35s ease;
 }
 
 .edge.left {
     left: 0;
     justify-content: flex-start;
     padding-left: 16px;
-    background: linear-gradient(to right, rgba(5, 6, 11, 0.97) 0%, rgba(5, 6, 11, 0.86) 30%, rgba(5, 6, 11, 0.45) 65%, rgba(5, 6, 11, 0) 100%);
+    background: radial-gradient(farthest-side at 0% 50%, rgba(4, 5, 11, 0.7) 0%, rgba(4, 5, 11, 0.45) 35%, rgba(4, 5, 11, 0.16) 68%, rgba(4, 5, 11, 0) 100%);
 }
 
 .edge.right {
     right: 0;
     justify-content: flex-end;
     padding-right: 16px;
-    background: linear-gradient(to left, rgba(5, 6, 11, 0.97) 0%, rgba(5, 6, 11, 0.86) 30%, rgba(5, 6, 11, 0.45) 65%, rgba(5, 6, 11, 0) 100%);
+    background: radial-gradient(farthest-side at 100% 50%, rgba(4, 5, 11, 0.7) 0%, rgba(4, 5, 11, 0.45) 35%, rgba(4, 5, 11, 0.16) 68%, rgba(4, 5, 11, 0) 100%);
 }
 
 .edge-arrow {
@@ -429,8 +560,14 @@ export default {
         font-size: 1.15rem;
     }
 
+    .row-viewport {
+        --fade: 64px;
+    }
+
     .edge {
-        width: 76px;
+        top: -32px;
+        bottom: -32px;
+        width: 96px;
     }
 
     .edge.left {
@@ -444,6 +581,20 @@ export default {
     .edge-arrow {
         width: 36px;
         height: 36px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .poster-enter-active,
+    .poster-leave-active {
+        transition: opacity 0.2s ease;
+    }
+
+    .poster-enter-from,
+    .poster-leave-to {
+        flex-basis: clamp(132px, 34vw, 200px);
+        margin-right: 0;
+        transform: none;
     }
 }
 </style>

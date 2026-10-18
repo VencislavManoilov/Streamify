@@ -25,7 +25,17 @@ const schemaDefinition = {
     medium_cover_image: { type: 'text', notNullable: true },
     large_cover_image: { type: 'text', notNullable: true },
     torrents: { type: 'json', notNullable: true },
+    // When someone last reset the movie (looked it up on YTS again), so it can't be reset over and over
+    reset_at: { type: 'timestamp', notNullable: false },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // Cast, crew and the other details TMDB has about a movie, looked up the first time someone opens it.
+  // `data` is null when TMDB doesn't know the movie.
+  movie_details: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', unique: true, notNullable: true },
+    data: { type: 'json', notNullable: false },
+    fetched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   },
   categories: {
     id: { type: 'increments', primary: true },
