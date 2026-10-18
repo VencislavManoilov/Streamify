@@ -73,6 +73,7 @@ const fileTimes = new WeakMap();
 export function shiftCues(track, offset) {
     if (!track || !track.cues) return;
 
+    let moved = false;
     for (const cue of Array.from(track.cues)) {
         let times = fileTimes.get(cue);
         if (!times) {
@@ -83,13 +84,17 @@ export function shiftCues(track, offset) {
         // Browsers ignore negative times, so cues moved to before the movie starts stop at 0
         const start = Math.max(0, times.start + offset);
         const end = Math.max(0, times.end + offset);
-        // Moving later sets the end first and moving earlier the start, so a cue never ends before it starts
-        if (start > cue.startTime) {
-            cue.endTime = end;
-            cue.startTime = start;
-        } else {
-            cue.startTime = start;
-            cue.endTime = end;
-        }
+        if (start === cue.startTime && end === cue.endTime) continue;
+
+        // Moved while it's out of the track: Firefox never takes a cue off the screen when its times change
+        // while it's showing, so every change of the sync left the line on screen stuck there
+        track.removeCue(cue);
+        cue.startTime = start;
+        cue.endTime = end;
+        track.addCue(cue);
+        moved = true;
     }
+
+    // Plyr redraws the subtitles on this event, which browsers leave out when the line on screen is only taken away
+    if (moved) track.dispatchEvent(new Event('cuechange'));
 }

@@ -333,10 +333,11 @@ export default {
                     keyboard: { focused: false, global: true },
                     captions: { active: true, update: true },
                     fullscreen: { enabled: true, fallback: true, iosNative: false, container: '.video-container' },
+                    // The control bar is laid out in two rows by the styles below, whatever this order
                     controls: [
                         'play-large',
-                        'rewind',
                         'play',
+                        'rewind',
                         'fast-forward',
                         'progress',
                         'current-time',
@@ -658,8 +659,10 @@ export default {
         // The panel opens above the control bar and may not grow taller than the player
         fitSettings() {
             const container = this.$refs.videoContainer;
-            if (!container || !this.settingsSlot) return;
-            const room = this.settingsSlot.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
+            if (!container || !this.settingsSlot || !this.player) return;
+            const controlsTop = this.player.elements.controls.getBoundingClientRect().top;
+            const room = controlsTop - container.getBoundingClientRect().top - 24;
+            container.style.setProperty('--settings-offset', `${Math.round(this.settingsSlot.getBoundingClientRect().top - controlsTop + 10)}px`);
             container.style.setProperty('--settings-max-height', `${Math.max(180, Math.round(room))}px`);
         },
         closeSettingsOutside(event) {
@@ -667,9 +670,10 @@ export default {
                 this.settingsOpen = false;
             }
         },
-        // A click doesn't move the focus onto the player's buttons, so Space can't press them again
+        // A click doesn't move the focus onto the player's buttons, so Space can't press them again. Plyr's seek
+        // and volume bars are range inputs, which don't move at all without their mousedown (dropFocus blurs them).
         keepFocus(event) {
-            if (event.target.closest('button, [role="slider"]')) event.preventDefault();
+            if (event.target.closest('button, [role="slider"]:not(input)')) event.preventDefault();
         },
         // Plyr's seek and volume sliders do take the focus while they're dragged, so it's dropped afterwards
         dropFocus() {
@@ -961,6 +965,27 @@ export default {
 /* Subtitles are sized from the player's width (cqw), so they grow with it in fullscreen */
 .video-container {
     --plyr-color-main: #e9c37b;
+    --plyr-font-family: var(--font);
+    --plyr-focus-visible-color: var(--accent);
+    --plyr-control-icon-size: 20px;
+    --plyr-control-padding: 10px;
+    --plyr-video-control-color: var(--text);
+    --plyr-video-control-color-hover: #fff;
+    --plyr-video-control-background-hover: rgba(255, 255, 255, 0.12);
+    --plyr-range-track-height: 4px;
+    --plyr-range-thumb-height: 14px;
+    --plyr-range-thumb-active-shadow-width: 6px;
+    --plyr-range-thumb-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    /* Plyr reads the pressed thumb's halo of video players from the audio variable */
+    --plyr-audio-range-thumb-active-shadow-color: rgba(233, 195, 123, 0.28);
+    --plyr-video-range-track-background: rgba(255, 255, 255, 0.14);
+    --plyr-video-progress-buffered-background: rgba(255, 255, 255, 0.2);
+    --plyr-tooltip-background: rgba(14, 15, 26, 0.94);
+    --plyr-tooltip-color: var(--text);
+    --plyr-tooltip-radius: 8px;
+    --plyr-tooltip-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    /* How far the subtitles move up while the control bar shows */
+    --dock-lift: 84px;
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
@@ -1021,6 +1046,242 @@ export default {
 
 .video-container:not(.started) :deep(.plyr__control--overlaid) {
     display: none;
+}
+
+/* Plyr's control bar, made into a glass dock like the settings panel: the timeline on top, the playback
+   buttons, volume and time below it on the left, and the subtitle, settings and fullscreen buttons on the right */
+.video-container :deep(.plyr__controls) {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    display: grid;
+    grid-template-columns: repeat(6, auto) 1fr repeat(3, auto);
+    grid-template-areas:
+        "seek seek seek seek seek seek seek seek seek seek"
+        "play rewind forward volume current duration . captions settings fullscreen";
+    align-items: center;
+    column-gap: 2px;
+    padding: 4px 10px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(26, 28, 44, 0.8) 0%, rgba(14, 15, 26, 0.88) 100%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 18px 48px rgba(0, 0, 0, 0.45);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.video-container:fullscreen :deep(.plyr__controls) {
+    left: 24px;
+    right: 24px;
+    bottom: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.video-container:-webkit-full-screen :deep(.plyr__controls) {
+    left: 24px;
+    right: 24px;
+    bottom: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Sinks a little as it fades instead of dropping out of the player */
+.video-container :deep(.plyr--hide-controls .plyr__controls) {
+    transform: translateY(10px);
+}
+
+.video-container :deep(.plyr__controls .plyr__controls__item) {
+    margin: 0;
+}
+
+.video-container :deep(.plyr__controls .plyr__progress__container) {
+    grid-area: seek;
+    padding: 0 4px;
+}
+
+.video-container :deep([data-plyr="play"]) {
+    grid-area: play;
+}
+
+.video-container :deep([data-plyr="rewind"]) {
+    grid-area: rewind;
+}
+
+.video-container :deep([data-plyr="fast-forward"]) {
+    grid-area: forward;
+}
+
+.video-container :deep(.plyr__volume) {
+    grid-area: volume;
+}
+
+.video-container :deep(.plyr__time--current) {
+    grid-area: current;
+}
+
+.video-container :deep(.plyr__time--duration) {
+    grid-area: duration;
+}
+
+.video-container :deep([data-plyr="captions"]) {
+    grid-area: captions;
+}
+
+.video-container :deep(.plyr__controls .plyr__menu) {
+    grid-area: settings;
+}
+
+.video-container :deep([data-plyr="fullscreen"]) {
+    grid-area: fullscreen;
+}
+
+.video-container :deep(.plyr__controls .plyr__control) {
+    border-radius: 50%;
+    transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+
+.video-container :deep(.plyr__controls .plyr__control:active) {
+    transform: scale(0.92);
+}
+
+/* Play stands out as a white disc, like the picked chip in the settings */
+.video-container :deep(.plyr__controls [data-plyr="play"]) {
+    margin-right: 6px;
+    background: #f2f2f4;
+    color: #0b0b10;
+}
+
+.video-container :deep(.plyr__controls [data-plyr="play"]:hover) {
+    background: #fff;
+    color: #0b0b10;
+}
+
+/* Subtitles on: the button turns gold */
+.video-container :deep([data-plyr="captions"].plyr__control--pressed) {
+    color: var(--accent);
+}
+
+.video-container :deep(.plyr__controls .plyr__time) {
+    padding: 0;
+    color: var(--text);
+    font-size: 0.86rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.video-container :deep(.plyr__volume + .plyr__time--current) {
+    margin-left: 10px;
+}
+
+.video-container :deep(.plyr__controls .plyr__time--duration) {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.video-container :deep(.plyr__time + .plyr__time::before) {
+    content: '/';
+    margin: 0 6px;
+    color: var(--text-faint);
+}
+
+.video-container :deep(.plyr__volume input[type="range"]) {
+    width: 76px;
+    min-width: 0;
+    margin: 0 4px 0 2px;
+}
+
+/* The timeline and the volume share the settings sliders' look: a gold fill and a white thumb with a gold halo */
+.video-container :deep(.plyr__controls input[type="range"]::-moz-range-progress) {
+    background: linear-gradient(90deg, #c9a15a, var(--accent));
+}
+
+.video-container :deep(.plyr__controls input[type="range"]::-webkit-slider-runnable-track) {
+    background-image: linear-gradient(90deg, #c9a15a, var(--accent));
+    background-repeat: no-repeat;
+    background-size: var(--value, 0%) 100%;
+}
+
+.video-container :deep(.plyr__controls input[type="range"]:hover::-moz-range-thumb) {
+    box-shadow: var(--plyr-range-thumb-shadow), 0 0 0 6px rgba(233, 195, 123, 0.28);
+}
+
+.video-container :deep(.plyr__controls input[type="range"]:hover::-webkit-slider-thumb) {
+    box-shadow: var(--plyr-range-thumb-shadow), 0 0 0 6px rgba(233, 195, 123, 0.28);
+}
+
+/* The timeline's thumb only shows while it's pointed at, and the line thickens a little then */
+.video-container :deep(.plyr__progress input[type="range"]::-moz-range-thumb) {
+    transform: scale(0);
+}
+
+.video-container :deep(.plyr__progress input[type="range"]::-webkit-slider-thumb) {
+    transform: scale(0);
+}
+
+.video-container :deep(.plyr__progress__container:hover) {
+    --plyr-range-track-height: 6px;
+}
+
+.video-container :deep(.plyr__progress__container:hover input[type="range"]::-moz-range-thumb) {
+    transform: none;
+}
+
+.video-container :deep(.plyr__progress__container:hover input[type="range"]::-webkit-slider-thumb) {
+    transform: none;
+}
+
+/* The time under the pointer, in a dark pill like the rest of the player */
+.video-container :deep(.plyr__progress .plyr__tooltip) {
+    padding: 5px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.82rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Subtitles move up over the dock while it shows */
+.video-container :deep(.plyr:not(.plyr--hide-controls) .plyr__controls:not(:empty) ~ .plyr__captions) {
+    transform: translateY(calc(-1 * var(--dock-lift)));
+}
+
+.video-container:fullscreen {
+    --dock-lift: 96px;
+}
+
+.video-container:-webkit-full-screen {
+    --dock-lift: 96px;
+}
+
+/* The big button over a paused movie is the same glass circle as the start button */
+.video-container :deep(.plyr__control--overlaid) {
+    display: grid;
+    place-items: center;
+    width: 88px;
+    height: 88px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(10, 11, 20, 0.45);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    color: #fff;
+}
+
+.video-container.started :deep(.plyr--full-ui.plyr--video .plyr__control--overlaid) {
+    display: grid;
+}
+
+.video-container :deep(.plyr__control--overlaid:hover) {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translate(-50%, -50%) scale(1.06);
+}
+
+.video-container :deep(.plyr__control--overlaid svg) {
+    left: 2px;
+    width: 34px;
+    height: 34px;
 }
 
 .overlay {

@@ -265,7 +265,8 @@ export default {
 .settings {
     position: absolute;
     right: -4px;
-    bottom: calc(100% + 12px);
+    /* Clears the whole control bar, which reaches above the gear */
+    bottom: calc(100% + var(--settings-offset, 12px));
     z-index: 5;
     width: 340px;
     max-width: calc(100vw - 32px);
@@ -289,7 +290,7 @@ export default {
     line-height: 1.4;
     text-align: left;
     cursor: default;
-    transform-origin: calc(100% - 22px) calc(100% + 12px);
+    transform-origin: calc(100% - 22px) calc(100% + var(--settings-offset, 12px));
 }
 
 .view {
