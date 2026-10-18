@@ -986,6 +986,13 @@ export default {
     --plyr-tooltip-color: var(--text);
     --plyr-tooltip-radius: 8px;
     --plyr-tooltip-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    /* Frosted glass for the round play buttons over the video. The sheen and the rim make it read as glass
+       even where the browser can't blur what's behind it. */
+    --glass-background: radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.1) 46%, rgba(255, 255, 255, 0.04) 100%), rgba(18, 20, 32, 0.22);
+    --glass-background-hover: radial-gradient(circle at 30% 22%, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0.16) 46%, rgba(255, 255, 255, 0.08) 100%), rgba(18, 20, 32, 0.18);
+    --glass-border: 1px solid rgba(255, 255, 255, 0.42);
+    --glass-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), inset 0 -10px 20px rgba(0, 0, 0, 0.14), 0 12px 32px rgba(0, 0, 0, 0.35);
+    --glass-blur: blur(14px) saturate(170%);
     /* How far the subtitles move up while the controls show */
     --controls-lift: 72px;
     position: relative;
@@ -1280,11 +1287,16 @@ export default {
     width: 88px;
     height: 88px;
     padding: 0;
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    background: rgba(10, 11, 20, 0.45);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
+    border: var(--glass-border);
+    background: var(--glass-background);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    box-shadow: var(--glass-shadow);
     color: #fff;
+}
+
+.video-container :deep(.plyr--paused .plyr__control--overlaid) {
+    opacity: 1;
 }
 
 .video-container.started :deep(.plyr--full-ui.plyr--video .plyr__control--overlaid) {
@@ -1292,12 +1304,13 @@ export default {
 }
 
 .video-container :deep(.plyr__control--overlaid:hover) {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--glass-background-hover);
     transform: translate(-50%, -50%) scale(1.06);
 }
 
 .video-container :deep(.plyr__control--overlaid svg) {
     left: 2px;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.3));
     width: 34px;
     height: 34px;
 }
@@ -1346,11 +1359,12 @@ export default {
     width: 88px;
     height: 88px;
     padding: 0;
-    border: 1px solid rgba(255, 255, 255, 0.35);
+    border: var(--glass-border);
     border-radius: 50%;
-    background: rgba(10, 11, 20, 0.45);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
+    background: var(--glass-background);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    box-shadow: var(--glass-shadow);
     color: #fff;
     cursor: pointer;
     transition: transform 0.2s ease, background-color 0.2s ease;
@@ -1358,7 +1372,7 @@ export default {
 
 .play-button:hover {
     transform: scale(1.06);
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--glass-background-hover);
 }
 
 /* The triangle is drawn a hair right of center, which is what looks centered in a circle */
@@ -1366,6 +1380,7 @@ export default {
     width: 40px;
     height: 40px;
     fill: currentColor;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.3));
 }
 
 .resume {
