@@ -47,12 +47,18 @@ export default {
 
   --font: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --gutter: clamp(16px, 4vw, 48px);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
 }
 
-/* The gradient's average edge tone, for wherever a browser paints the bare page color instead of the
-   background layer: overscroll, and the bars of mobile Safari when it fills them with one color */
+/* The page itself carries the bottom edge of the background below: its colors from left to right, the same all
+   the way down. Safari 26 on iOS draws no fixed layer under its floating toolbar, only the page, so this is what
+   shows there and the background fades into it before it gets cut off. The plain color is the top edge's tone,
+   for Safari to tint its status bar with */
 html {
-  background: #16122b;
+  background-color: #161837;
+  background-image:
+    var(--grain),
+    linear-gradient(to right, #240f25 0%, #230f24 10%, #1e0d21 20%, #180c1d 30%, #130a1a 40%, #0d0916 50%, #0d0a1a 60%, #100c21 70%, #130f28 80%, #16112e 90%, #181231 100%);
 }
 
 body {
@@ -67,21 +73,22 @@ body {
 /* Dusk over a dark room, spread over the whole screen: violet in the top left and bottom right corners,
    petrol teal down the right side, wine in the bottom left and a faint violet haze in the middle,
    with a fine grain on top that keeps the dark gradients from banding.
-   No negative z-index: Safari 26 on iOS doesn't draw a layer under the page past the edges of the
-   viewport, so it would stop above the floating toolbar. #app is stacked over it instead */
+   It fades out at the bottom into the page's own background, which goes on under Safari's toolbar */
 body::before {
   content: '';
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  /* lvh is the viewport with the browser bars retracted, so the layer also runs under
-     the bottom toolbar on mobile browsers instead of stopping at its edge */
+  /* lvh is the viewport with the browser bars retracted, so the layer reaches the bottom of the screen
+     on mobile browsers that do draw it under their toolbar */
   height: 100vh;
   height: 100lvh;
   pointer-events: none;
+  /* Gone well before the top of Safari's toolbar, about 100px up from the bottom of the screen */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 260px), transparent calc(100% - 120px));
   background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
+    var(--grain),
     radial-gradient(ellipse 80% 70% at 5% 2%, rgba(92, 66, 196, 0.38), transparent 72%),
     radial-gradient(ellipse 62% 72% at 98% 18%, rgba(22, 108, 138, 0.32), transparent 72%),
     radial-gradient(ellipse 70% 55% at 52% 56%, rgba(64, 52, 150, 0.16), transparent 72%),
