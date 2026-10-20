@@ -78,6 +78,9 @@ body::before {
   height: 100lvh;
   z-index: -2;
   pointer-events: none;
+  /* Safari 26 on iOS cuts a fully opaque fixed layer off at its floating toolbar and paints the plain
+     page color under it. A barely translucent layer gets drawn under the toolbar like the rest of the page */
+  opacity: 0.99;
   background:
     radial-gradient(ellipse 80% 70% at 5% 2%, rgba(92, 66, 196, 0.38), transparent 72%),
     radial-gradient(ellipse 62% 72% at 98% 18%, rgba(22, 108, 138, 0.32), transparent 72%),
