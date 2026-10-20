@@ -69,7 +69,13 @@ body {
 body::before {
   content: '';
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* lvh is the viewport with the browser bars retracted, so the layer also runs under
+     the bottom toolbar on mobile browsers instead of stopping at its edge */
+  height: 100vh;
+  height: 100lvh;
   z-index: -2;
   pointer-events: none;
   background:
@@ -85,7 +91,11 @@ body::before {
 body::after {
   content: '';
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100lvh;
   z-index: -1;
   pointer-events: none;
   opacity: 0.05;
