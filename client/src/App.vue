@@ -49,15 +49,15 @@ export default {
   --gutter: clamp(16px, 4vw, 48px);
 }
 
+/* The gradient's average edge tone, for wherever a browser paints the bare page color instead of the
+   background layer: overscroll, and the bars of mobile Safari when it fills them with one color */
 html {
-  background: var(--bg);
+  background: #16122b;
 }
 
-/* Transparent on purpose: a body background would paint over the glow layers below */
 body {
   margin: 0;
   min-height: 100vh;
-  background: transparent;
   color: var(--text);
   font-family: var(--font);
   font-size: 16px;
@@ -65,7 +65,10 @@ body {
 }
 
 /* Dusk over a dark room, spread over the whole screen: violet in the top left and bottom right corners,
-   petrol teal down the right side, wine in the bottom left and a faint violet haze in the middle */
+   petrol teal down the right side, wine in the bottom left and a faint violet haze in the middle,
+   with a fine grain on top that keeps the dark gradients from banding.
+   No negative z-index: Safari 26 on iOS doesn't draw a layer under the page past the edges of the
+   viewport, so it would stop above the floating toolbar. #app is stacked over it instead */
 body::before {
   content: '';
   position: fixed;
@@ -76,12 +79,9 @@ body::before {
      the bottom toolbar on mobile browsers instead of stopping at its edge */
   height: 100vh;
   height: 100lvh;
-  z-index: -2;
   pointer-events: none;
-  /* Safari 26 on iOS cuts a fully opaque fixed layer off at its floating toolbar and paints the plain
-     page color under it. A barely translucent layer gets drawn under the toolbar like the rest of the page */
-  opacity: 0.99;
   background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
     radial-gradient(ellipse 80% 70% at 5% 2%, rgba(92, 66, 196, 0.38), transparent 72%),
     radial-gradient(ellipse 62% 72% at 98% 18%, rgba(22, 108, 138, 0.32), transparent 72%),
     radial-gradient(ellipse 70% 55% at 52% 56%, rgba(64, 52, 150, 0.16), transparent 72%),
@@ -90,22 +90,9 @@ body::before {
     linear-gradient(160deg, #0c0d1c 0%, #08091a 45%, #09070f 100%);
 }
 
-/* Fine grain keeps the dark gradients from banding */
-body::after {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100vh;
-  height: 100lvh;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.05;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
+/* Its own stacking layer, so the whole page paints over the background above */
 #app {
+  isolation: isolate;
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
