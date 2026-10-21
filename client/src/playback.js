@@ -38,12 +38,6 @@ export function formatSize(bytes) {
     return gigabytes >= 1 ? `${gigabytes.toFixed(gigabytes >= 10 ? 0 : 1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
-export function formatSpeed(bytesPerSecond) {
-    const value = Math.max(0, bytesPerSecond || 0);
-    if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB/s`;
-    return `${Math.round(value / 1024)} KB/s`;
-}
-
 // How well seeded a torrent is (see healthOf in server/utils/streamSources.js), in words
 export const HEALTH = {
     great: { label: 'Fast', tone: 'good' },

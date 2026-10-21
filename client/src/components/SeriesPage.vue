@@ -105,7 +105,7 @@
                             <span class="slow-dot" aria-hidden="true"></span>
                             <span class="slow-text">
                                 <strong>This source is slow</strong>
-                                <span>{{ slowText }}</span>
+                                <span>It may keep stopping to load.</span>
                             </span>
                             <button v-if="untriedSource()" type="button" class="slow-switch" tabindex="-1" @click="tryAnother">Switch</button>
                             <button type="button" class="slow-close" tabindex="-1" aria-label="Keep this source" @click="dismissSlow">
@@ -202,7 +202,7 @@
 <script>
 import api from '../api';
 import { API_URL } from '../config';
-import { browserCaps, episodeLabel, formatSpeed } from '../playback';
+import { browserCaps, episodeLabel } from '../playback';
 import { episodeList, formatAirDate, hasAired, seriesData, seriesYears } from '../seriesData';
 import { session } from '../session';
 import { episodeHistoryPath, watchHistory } from '../watchHistory';
@@ -236,7 +236,7 @@ const DEAD_AFTER = 35000;
 
 // Why a source didn't work, by the server's error code
 const REASONS = {
-    'no-peers': 'Nobody is sharing this source right now',
+    'no-peers': "This source isn't available right now",
     'no-file': "This source doesn't have the episode",
     unsupported: "This source's format can't play in this browser",
     unreadable: "This source's video couldn't be read",
@@ -415,54 +415,37 @@ export default {
         sourcesEmptyText() {
             return { loading: 'Looking…', empty: 'None found', error: "Couldn't look", unaired: 'Not aired yet' }[this.sourcesState] || 'None yet';
         },
-        // Under the spinner while the episode loads: how its torrent is doing
+        // Under the spinner while the episode loads
         loadingNote() {
             if (this.autoMessage) return this.autoMessage;
             if (this.sourcesState === 'loading') return 'Looking for this episode…';
-            const stats = this.stats;
-            if (!this.selected) return '';
-            if (!stats || !stats.loaded) return 'Connecting to the torrent…';
-            if (!stats.ready) return `Finding people to download from · ${stats.peers} so far`;
-            if (this.preparing) return `Getting the episode ready · ${stats.peers} peers · ${formatSpeed(stats.downloadSpeed)}`;
-            return `${stats.peers} peers · ${formatSpeed(stats.downloadSpeed)}`;
+            return this.selected && this.preparing ? 'Getting the episode ready…' : '';
         },
         // Offered under the spinner when the episode takes long to start
         canTryAnother() {
             return !!this.untriedSource() && !this.episodePlayed && !!this.selected && this.now - this.preparingSince > LONG_LOAD;
         },
-        // How the chosen source streams right now, next to its name
+        // How the chosen source streams right now, next to its name. Only in words: the torrent's peers and
+        // speeds made it look like the browser downloads the episode from the torrent itself.
         health() {
             if (!this.selected) return null;
-            const stats = this.stats;
             if (this.prepareError) return { tone: 'bad', text: "Didn't load" };
-            if (!stats || !stats.loaded) return { tone: 'muted', text: 'Connecting…' };
-            if (!stats.ready) return { tone: 'muted', text: `Finding peers · ${stats.peers}` };
-            if (this.preparing || !this.plan) return { tone: 'muted', text: `Loading · ${stats.peers} peers · ${formatSpeed(stats.downloadSpeed)}` };
-            if (stats.progress >= 0.999) return { tone: 'good', text: 'Fully downloaded', title: 'The whole episode is on the server' };
+            if (this.preparing || !this.plan) return { tone: 'muted', text: 'Loading…' };
             // Before play is pressed, and while paused, nothing is asked of the torrent, so its speed says nothing
-            if (!this.started || this.playerPaused) {
-                return stats.peers
-                    ? { tone: 'good', text: `${this.started ? 'Paused' : 'Ready'} · ${stats.peers} peers`, title: `Downloading at ${formatSpeed(stats.downloadSpeed)}` }
-                    : { tone: 'warn', text: 'No peers right now', title: 'Nobody sharing this source is connected at the moment' };
-            }
+            if (!this.started || this.playerPaused) return { tone: 'good', text: this.started ? 'Paused' : 'Ready' };
+            const stats = this.stats;
+            if (!stats || !stats.ready) return { tone: 'muted', text: 'Loading…' };
             const needed = this.plan.bitrate || 0;
             const speed = this.averageSpeed;
-            const neededText = needed ? `, it needs ${formatSpeed(needed)}` : '';
-            // With plenty ready to play the browser stops asking for more, so the speed drops and says nothing
-            if (this.buffered >= 30) {
-                return { tone: 'good', text: `Smooth · ${stats.peers} peers`, title: `${Math.round(this.buffered)} seconds ready ahead${neededText}` };
-            }
-            if (!needed || speed >= needed * 1.1) {
-                return { tone: 'good', text: `Smooth · ${formatSpeed(speed)}`, title: `${stats.peers} peers${neededText}` };
+            // With plenty ready to play the browser stops asking for more, so the speed drops and says nothing.
+            // Neither does it once the whole episode is on the server.
+            if (this.buffered >= 30 || stats.progress >= 0.999 || !needed || speed >= needed * 1.1) {
+                return { tone: 'good', text: 'Smooth' };
             }
             if (speed < needed * 0.8) {
-                return { tone: 'bad', text: `Slow · ${formatSpeed(speed)}`, title: `Downloads at ${formatSpeed(speed)}${neededText}` };
+                return { tone: 'bad', text: 'Slow', title: 'This source loads slower than the episode plays' };
             }
-            return { tone: 'warn', text: `${formatSpeed(speed)} · ${stats.peers} peers`, title: `It needs ${formatSpeed(needed)}` };
-        },
-        slowText() {
-            if (!this.stats || !this.plan || !this.plan.bitrate) return 'It may keep stopping to load.';
-            return `It downloads at ${formatSpeed(this.averageSpeed)}, the episode needs ${formatSpeed(this.plan.bitrate)}.`;
+            return { tone: 'warn', text: 'Just keeping up', title: 'This source loads about as fast as the episode plays' };
         },
         // The speed of the last few seconds, which says more than one moment does
         averageSpeed() {
@@ -818,7 +801,7 @@ export default {
                 this.report(source, 'dead');
                 this.prepareToken = (this.prepareToken || 0) + 1;
                 this.preparing = false;
-                this.sourceFailed(source, 'Nobody is sharing this source right now');
+                this.sourceFailed(source, REASONS['no-peers']);
             }
         },
         // A source that stays too slow while the episode plays is pointed out, with a way to switch

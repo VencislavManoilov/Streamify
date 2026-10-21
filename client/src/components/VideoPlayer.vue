@@ -208,7 +208,7 @@ export default {
             type: Function,
             default: null
         },
-        // Shown under the spinner while the video loads, e.g. how the torrent is doing
+        // Shown under the spinner while the video loads, e.g. what it's waiting for
         note: {
             type: String,
             default: ''
