@@ -13,7 +13,7 @@
             </router-link>
         </div>
         <SearchBar v-if="search" class="header-search" />
-        <MediaSwitch v-if="search" class="header-switch" />
+        <MediaSwitch v-if="mediaSwitch" class="header-switch" />
         <div class="header-end">
             <router-link v-if="adminLink && isAdmin" to="/admin" class="admin-link">Admin</router-link>
             <router-link
@@ -50,6 +50,11 @@ export default {
             default: false
         },
         search: {
+            type: Boolean,
+            default: false
+        },
+        // The Movies/Series switch. Not on the movie and series pages, where pressing it left what was playing.
+        mediaSwitch: {
             type: Boolean,
             default: false
         },

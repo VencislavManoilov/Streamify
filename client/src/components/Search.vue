@@ -1,6 +1,6 @@
 <template>
     <div class="search-page">
-        <AppHeader back search />
+        <AppHeader back search media-switch />
 
         <main class="results">
             <template v-if="search">

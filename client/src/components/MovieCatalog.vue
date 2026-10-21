@@ -1,6 +1,6 @@
 <template>
     <div class="home">
-        <AppHeader search admin-link />
+        <AppHeader search media-switch admin-link />
 
         <LoadingSpinner v-if="loading" overlay :label="kind === 'series' ? 'Loading series' : 'Loading movies'" />
         <p v-else-if="error" class="message">{{ error }}</p>

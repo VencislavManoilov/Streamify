@@ -34,11 +34,9 @@
 </template>
 
 <script>
-const SERIES_PAGES = ['SeriesHome', 'Series'];
-
 /**
- * Movies or series. On the home pages and the movie and series pages it goes to that catalog. On the search
- * page it filters the results instead, and also offers all of them, which every new search starts with.
+ * Movies or series. On the home pages it goes to that catalog. On the search page it filters the results
+ * instead, and also offers all of them, which every new search starts with.
  */
 export default {
     name: 'MediaSwitch',
@@ -64,7 +62,7 @@ export default {
                 const type = this.$route.query.type;
                 return type === 'movie' || type === 'series' ? type : 'all';
             }
-            return SERIES_PAGES.includes(this.$route.name) ? 'series' : 'movie';
+            return this.$route.name === 'SeriesHome' ? 'series' : 'movie';
         },
         indicatorStyle() {
             return { transform: `translateX(${this.indicator.left}px)`, width: `${this.indicator.width}px` };
@@ -108,7 +106,7 @@ export default {
                 this.$router.replace({ query: { ...this.$route.query, type: value === 'all' ? undefined : value } });
                 return;
             }
-            if (value === this.active && !['Movie', 'Series'].includes(this.$route.name)) return;
+            if (value === this.active) return;
             this.$router.push(value === 'series' ? { name: 'SeriesHome' } : { name: 'Home' });
         }
     }
