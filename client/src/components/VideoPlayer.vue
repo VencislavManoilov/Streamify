@@ -101,6 +101,12 @@ const START_TIMEOUT = 75000;
 // A converted video waits for the server to make each segment, which a slow torrent can drag out
 const HLS_STALL_TIMEOUT = 45000;
 const HLS_START_TIMEOUT = 150000;
+// Data that keeps coming in without adding to what's loaded where the video waits doesn't keep it alive for
+// longer than this (or the timeouts above, when they're longer)
+const GROWTH_TIMEOUT = 60000;
+// Seconds loaded where the video waits that should have it playing. When it still doesn't move for
+// STALL_TIMEOUT, the browser is stuck on this stream and waiting longer doesn't help.
+const STUCK_AHEAD = 10;
 // Times a broken stream is loaded again before the error is shown, when it doesn't play in between
 const MAX_RECOVERIES = 4;
 // Plyr's own settings icon
@@ -296,6 +302,8 @@ export default {
 
         // Stream health, see checkStream
         this.lastDataAt = Date.now();
+        this.lastGrowthAt = Date.now();
+        this.lastAhead = 0;
         this.recoveries = 0;
         this.recovering = false;
         this.waitingForNetwork = false;
@@ -388,6 +396,7 @@ export default {
                 waiting: () => {
                     this.buffering = true;
                     this.lastDataAt = Date.now();
+                    this.lastGrowthAt = Date.now();
                 },
                 // Data is arriving, so the stream is alive even while the video still waits for enough of it
                 progress: () => {
@@ -442,6 +451,9 @@ export default {
             if (!videoElement || this.start) return;
 
             this.start = true;
+            // Plyr counts the pointer over the start screen as over its controls, which it never hides then.
+            // The start screen goes away without a mouseleave, so that's undone here.
+            if (this.player && this.player.elements.controls) this.player.elements.controls.hover = false;
             this.$emit('started');
             if (this.src) this.loadVideo(fromBeginning ? 0 : this.resumeAt);
             this.startSavingProgress();
@@ -495,6 +507,8 @@ export default {
             this.pendingSeek = startAt > 0 ? startAt : null;
             this.lastTime = null;
             this.lastDataAt = Date.now();
+            this.lastGrowthAt = Date.now();
+            this.lastAhead = 0;
             this.staleStream = false;
             this.hlsMediaErrors = 0;
             this.syncSubtitleTracks();
@@ -576,6 +590,7 @@ export default {
             this.recoveries = 0;
             this.streamState = null;
             this.lastDataAt = Date.now();
+            this.lastGrowthAt = Date.now();
             this.$emit('playing');
 
             if (!this.everPlayed) {
@@ -605,14 +620,21 @@ export default {
             this.$emit('failed', { everPlayed: this.everPlayed });
         },
         // Runs every 2 seconds. A video that waits for data that doesn't come has lost its stream, which
-        // happens when the network changes: the old connection just goes quiet.
+        // happens when the network changes: the old connection just goes quiet. So has one whose data never
+        // reaches the spot the video waits at, or that has plenty there and still doesn't play.
         checkStream() {
             const videoElement = this.$refs.video;
             if (!videoElement || !this.start || !this.src || this.loadError || this.recovering || this.waitingForNetwork) return;
 
+            const now = Date.now();
+            const ahead = this.bufferedAhead();
+            if (ahead > this.lastAhead + 0.25) this.lastGrowthAt = now;
+            this.lastAhead = ahead;
+
             const waiting = !videoElement.paused && !videoElement.ended && (!this.isVideoLoaded || this.buffering);
             if (!waiting) {
-                this.lastDataAt = Date.now();
+                this.lastDataAt = now;
+                this.lastGrowthAt = now;
                 return;
             }
 
@@ -621,8 +643,11 @@ export default {
             const limit = this.everPlayed
                 ? (converted ? HLS_STALL_TIMEOUT : STALL_TIMEOUT) * 2 ** this.recoveries
                 : (converted ? HLS_START_TIMEOUT : START_TIMEOUT);
-            if (Date.now() - this.lastDataAt > limit) {
-                this.recoverStream({ failed: false });
+            const stuck = ahead >= STUCK_AHEAD && now - this.lastGrowthAt > STALL_TIMEOUT;
+            if (stuck) console.warn(`The video doesn't play with ${Math.round(ahead)}s loaded`);
+            if (stuck || now - this.lastDataAt > limit || now - this.lastGrowthAt > Math.max(limit, GROWTH_TIMEOUT)) {
+                // One that never played is given up on right away, so the page can try another source
+                this.recoverStream({ failed: stuck });
             }
         },
         // Loads a broken stream again from where the video is, or waits for the connection to come back first
@@ -879,6 +904,7 @@ export default {
                 if (delta > 0 && delta < 3) {
                     this.unsavedWatch += delta;
                     this.lastDataAt = Date.now();
+                    this.lastGrowthAt = Date.now();
                 }
             }
             this.lastTime = time;
@@ -1080,6 +1106,12 @@ export default {
 
 .video-container:-webkit-full-screen :deep(.plyr__controls) {
     padding: 110px 40px 24px;
+}
+
+/* The pointer goes away with the controls. Plyr only hides it when its own element is fullscreen, and here
+   the fullscreen element is the container around it. */
+.video-container :deep(.plyr--hide-controls) {
+    cursor: none;
 }
 
 /* Sinks a little as it fades out */

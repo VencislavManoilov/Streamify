@@ -103,7 +103,33 @@ export default {
             open: false
         };
     },
+    watch: {
+        // While the list is open, pressing anywhere else or Escape closes it
+        open(open) {
+            if (open) {
+                document.addEventListener('pointerdown', this.onPointerDown, true);
+                document.addEventListener('keydown', this.onKeydown);
+            } else {
+                this.stopListening();
+            }
+        }
+    },
+    created() {
+        this.onPointerDown = (event) => {
+            if (!this.$el.contains(event.target)) this.open = false;
+        };
+        this.onKeydown = (event) => {
+            if (event.key === 'Escape') this.open = false;
+        };
+    },
+    beforeUnmount() {
+        this.stopListening();
+    },
     methods: {
+        stopListening() {
+            document.removeEventListener('pointerdown', this.onPointerDown, true);
+            document.removeEventListener('keydown', this.onKeydown);
+        },
         toggle() {
             this.open = !this.open;
         },
@@ -293,13 +319,20 @@ export default {
     50% { opacity: 1; }
 }
 
+/* Opens over the page under it instead of pushing it down */
 .drawer {
-    margin-top: 10px;
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: 0;
+    z-index: 30;
     padding: 10px;
     border: 1px solid var(--line);
     border-radius: 16px;
-    background: rgba(16, 18, 29, 0.92);
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+    background: rgba(16, 18, 29, 0.96);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
 }
 
 .drawer-head {
