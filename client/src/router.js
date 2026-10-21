@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import Movie from '@/components/Movie.vue';
 import Home from './components/Home.vue';
+import SeriesPage from './components/SeriesPage.vue';
 import Search from './components/Search.vue';
 import Profile from './components/Profile.vue';
 import Welcome from './components/Welcome.vue';
@@ -25,6 +26,20 @@ const routes = [
         path: '/movie/:imdb_code',
         name: 'Movie',
         component: Movie,
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/series',
+        name: 'SeriesHome',
+        component: Home,
+        props: { kind: 'series' },
+        meta: { requiresAuth: true }
+    },
+    {
+        // Without an episode the page opens the one to watch next
+        path: '/series/:imdb_code/:season(\\d+)?/:episode(\\d+)?',
+        name: 'Series',
+        component: SeriesPage,
         meta: { requiresAuth: true }
     },
     {

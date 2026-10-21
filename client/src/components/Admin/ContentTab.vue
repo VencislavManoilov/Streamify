@@ -3,7 +3,7 @@
         <div class="page-title">
             <div>
                 <h2>Content</h2>
-                <p>The home page categories and the torrents that are loaded for streaming.</p>
+                <p>The rows of the movie and series home pages and the torrents that are loaded for streaming.</p>
             </div>
         </div>
 
@@ -29,9 +29,14 @@
                     <div class="faint small-label">Movies in categories</div>
                     <div class="fact num">{{ totalMovies }}</div>
                 </div>
+                <div>
+                    <div class="faint small-label">Series in categories</div>
+                    <div class="fact num">{{ totalSeries }}</div>
+                </div>
             </div>
-            <p v-if="refreshing" class="faint refresh-note">Looking up every TMDB list on YTS takes a few minutes. Progress shows up in the logs.</p>
+            <p v-if="refreshing" class="faint refresh-note">Looking up every TMDB list on YTS and the torrent add-ons takes a few minutes. Progress shows up in the logs.</p>
 
+            <h4 class="kind-title">Movies</h4>
             <LoadingSpinner v-if="!data" :size="32" label="Loading the categories" />
             <div v-else class="categories">
                 <div v-for="category in data.categories" :key="category.id" class="category">
@@ -44,6 +49,20 @@
                     </div>
                 </div>
                 <p v-if="!data.categories.length" class="empty">No categories yet. Refresh to fetch them.</p>
+            </div>
+
+            <h4 class="kind-title">Series</h4>
+            <div v-if="data" class="categories">
+                <div v-for="category in data.seriesCategories || []" :key="`series-${category.id}`" class="category">
+                    <div class="category-head">
+                        <span class="category-name">{{ category.name }}</span>
+                        <span class="num faint">{{ category.series }}</span>
+                    </div>
+                    <div class="meter" :class="{ warn: category.series < 5 }">
+                        <span :style="{ width: `${Math.min(100, category.series / maxSeries * 100)}%` }"></span>
+                    </div>
+                </div>
+                <p v-if="!(data.seriesCategories || []).length" class="empty">No series categories yet. They are gathered in the background after the server starts.</p>
             </div>
         </div>
 
@@ -64,7 +83,7 @@
                     <table class="data">
                         <thead>
                             <tr>
-                                <th>Movie</th>
+                                <th>Video</th>
                                 <th>State</th>
                                 <th class="right">Peers</th>
                                 <th class="right">Down</th>
@@ -97,7 +116,7 @@
                         </tbody>
                     </table>
                 </div>
-                <p v-else class="empty">Nothing is loaded. Torrents load when someone starts a movie.</p>
+                <p v-else class="empty">Nothing is loaded. Torrents load when someone starts a movie or an episode.</p>
                 <p class="faint torrent-note">
                     Idle torrents are removed after {{ duration(torrents.idleTimeout / 1000) }}. Only the parts people watch are downloaded.
                 </p>
@@ -141,6 +160,15 @@ export default {
             if (!this.data || !this.data.categories.length) return 1;
             return Math.max(1, ...this.data.categories.map(category => category.movies));
         },
+        totalSeries() {
+            if (!this.data) return '–';
+            // A series in several rows counts in each, like the movies above
+            return (this.data.seriesCategories || []).reduce((total, category) => total + category.series, 0);
+        },
+        maxSeries() {
+            const categories = (this.data && this.data.seriesCategories) || [];
+            return Math.max(1, ...categories.map(category => category.series));
+        },
         countdown() {
             if (!this.data || !this.data.nextRefresh) return '–';
             const diff = this.data.nextRefresh - this.now;
@@ -179,7 +207,7 @@ export default {
         async refresh() {
             const ok = await this.confirmAction({
                 title: 'Refresh the categories now?',
-                message: 'Every category is fetched again from TMDB and matched on YTS. The home page keeps the old categories until it is done.',
+                message: 'Every movie category is fetched again from TMDB and matched on YTS, then the series ones from TMDB. The home pages keep the old categories until it is done.',
                 confirmLabel: 'Refresh'
             });
             if (!ok) return;
@@ -201,7 +229,7 @@ export default {
                 title: `Remove "${torrent.name}"?`,
                 message: torrent.streams
                     ? `${torrent.streams} ${torrent.streams === 1 ? 'person is' : 'people are'} watching it right now and will be cut off. The downloaded data is deleted.`
-                    : 'The downloaded data is deleted. It loads again when someone starts the movie.',
+                    : 'The downloaded data is deleted. It loads again when someone starts watching it.',
                 confirmLabel: 'Remove',
                 danger: true
             });
@@ -222,6 +250,16 @@ export default {
 <style scoped>
 .facts-row {
     margin-bottom: 20px;
+}
+
+.kind-title {
+    margin: 24px 0 12px;
+    font-size: 0.95rem;
+}
+
+.facts-row + .kind-title,
+.refresh-note + .kind-title {
+    margin-top: 0;
 }
 
 .small-label {

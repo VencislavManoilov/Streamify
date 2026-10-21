@@ -55,11 +55,87 @@ const schemaDefinition = {
     last_watched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   },
-  // Movies a user saved for later. A movie leaves the list once it has been watched to the end.
+  // Movies and series a user saved for later. A movie leaves the list once it has been watched to the end,
+  // a series once its last episode has been and it won't get new ones.
   watchlist: {
     id: { type: 'increments', primary: true },
     user_id: { type: 'integer', notNullable: true, references: 'users.id', onDelete: 'CASCADE' },
     imdb_code: { type: 'string', notNullable: true },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // Series from TMDB. The poster and backdrop columns are named like the movie ones, so pages list both alike.
+  series: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', unique: true, notNullable: true },
+    tmdb_id: { type: 'integer', notNullable: true },
+    title: { type: 'string', notNullable: true },
+    original_title: { type: 'string', notNullable: false },
+    year: { type: 'integer', notNullable: false },
+    // Set once the series has ended
+    end_year: { type: 'integer', notNullable: false },
+    status: { type: 'string', notNullable: false },
+    genres: { type: 'json', notNullable: true },
+    rating: { type: 'float', notNullable: true, defaultTo: 0 },
+    // Minutes of a typical episode
+    runtime: { type: 'integer', notNullable: false },
+    number_of_seasons: { type: 'integer', notNullable: true, defaultTo: 0 },
+    number_of_episodes: { type: 'integer', notNullable: true, defaultTo: 0 },
+    summary: { type: 'text', notNullable: true },
+    background_image: { type: 'text', notNullable: true },
+    small_cover_image: { type: 'text', notNullable: true },
+    medium_cover_image: { type: 'text', notNullable: true },
+    large_cover_image: { type: 'text', notNullable: true },
+    networks: { type: 'json', notNullable: false },
+    // { season, episode, name, airDate } as TMDB numbers them
+    last_episode: { type: 'json', notNullable: false },
+    next_episode: { type: 'json', notNullable: false },
+    original_language: { type: 'string', notNullable: false },
+    certification: { type: 'string', notNullable: false },
+    // Cast, creators, trailer..., looked up the first time someone opens the series
+    details: { type: 'json', notNullable: false },
+    details_fetched_at: { type: 'timestamp', notNullable: false },
+    // Whether torrent add-ons have its first episode. Series without torrents are left out of lists.
+    available: { type: 'boolean', notNullable: false },
+    available_checked_at: { type: 'timestamp', notNullable: false },
+    fetched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // Every season and episode of a series, numbered like the torrent add-ons number them (see utils/series.js)
+  series_episodes: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', unique: true, notNullable: true },
+    seasons: { type: 'json', notNullable: true },
+    fetched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  series_categories: {
+    id: { type: 'increments', primary: true },
+    name: { type: 'string', unique: true, notNullable: true },
+    series: { type: 'json', notNullable: true },
+    created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // The torrents found for an episode, kept for a few hours (see utils/streamSources.js)
+  episode_sources: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', notNullable: true },
+    season: { type: 'integer', notNullable: true },
+    episode: { type: 'integer', notNullable: true },
+    sources: { type: 'json', notNullable: true },
+    // Set when an add-on couldn't be asked, so the list is looked up again soon
+    partial: { type: 'boolean', notNullable: true, defaultTo: false },
+    fetched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
+  },
+  // One row per user and episode, like watch_history is for movies
+  episode_history: {
+    id: { type: 'increments', primary: true },
+    user_id: { type: 'integer', notNullable: true, references: 'users.id', onDelete: 'CASCADE' },
+    imdb_code: { type: 'string', notNullable: true },
+    season: { type: 'integer', notNullable: true },
+    episode: { type: 'integer', notNullable: true },
+    position: { type: 'float', notNullable: true, defaultTo: 0 },
+    duration: { type: 'float', notNullable: true, defaultTo: 0 },
+    watched_seconds: { type: 'float', notNullable: true, defaultTo: 0 },
+    completed: { type: 'boolean', notNullable: true, defaultTo: false },
+    last_watched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   },
   // People who asked to join. Kept here so a request isn't lost when the email to the admin fails.
@@ -78,6 +154,12 @@ const tableConstraints = {
   },
   watchlist: {
     unique: [['user_id', 'imdb_code']],
+  },
+  episode_sources: {
+    unique: [['imdb_code', 'season', 'episode']],
+  },
+  episode_history: {
+    unique: [['user_id', 'imdb_code', 'season', 'episode']],
   }
 };
 

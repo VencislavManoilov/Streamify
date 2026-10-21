@@ -53,6 +53,7 @@
                                 <td class="num muted">{{ date(user.created_at) }}</td>
                                 <td class="num muted">{{ ago(user.last_watched_at) }}</td>
                                 <td class="num right">{{ user.movies }}</td>
+                                <td class="num right">{{ user.episodes }}</td>
                                 <td class="num right">{{ hours(user.seconds) }}</td>
                                 <td class="num right">{{ user.saved }}</td>
                             </tr>
@@ -79,12 +80,12 @@
                                         <div>
                                             <h4>Recently watched</h4>
                                             <ul v-if="detail.history.length" class="list mini">
-                                                <li v-for="movie in detail.history" :key="movie.imdb_code">
+                                                <li v-for="movie in detail.history" :key="`${movie.imdb_code}-${movie.season}-${movie.episode}`">
                                                     <div class="movie-row">
                                                         <img v-if="movie.small_cover_image" class="poster" :src="movie.small_cover_image" alt="" loading="lazy" />
                                                         <span v-else class="poster"></span>
                                                         <div class="text">
-                                                            <div class="title">{{ movie.title }}</div>
+                                                            <div class="title">{{ movie.title }}<span v-if="movie.season !== undefined" class="faint"> · S{{ movie.season }} E{{ movie.episode }}</span></div>
                                                             <div class="meta">{{ movie.completed ? 'Finished' : `${progress(movie)}% watched` }} · {{ ago(movie.last_watched_at) }}</div>
                                                         </div>
                                                     </div>
@@ -137,6 +138,7 @@ const COLUMNS = [
     { id: 'created_at', label: 'Joined' },
     { id: 'last_watched_at', label: 'Last active' },
     { id: 'movies', label: 'Movies', right: true },
+    { id: 'episodes', label: 'Episodes', right: true },
     { id: 'seconds', label: 'Hours', right: true },
     { id: 'saved', label: 'Saved', right: true }
 ];

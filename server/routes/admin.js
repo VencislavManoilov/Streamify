@@ -7,6 +7,7 @@ const os = require('os');
 const logger = require('../utils/logger');
 const { sendMail, checkMail, getMailStatus } = require('../utils/mailer');
 const { YTS_API_URL } = require('../utils/yts');
+const { addonUrls, addonName } = require('../utils/streamSources');
 const { signSessionToken } = require('../middleware/Auth');
 const TorrentManager = require('../utils/torrentManager');
 
@@ -56,6 +57,10 @@ function escapeHtml(text) {
 }
 
 const toNumber = value => Number(value) || 0;
+
+function newestFirst(rows, column) {
+    return rows.sort((a, b) => new Date(b[column]) - new Date(a[column]));
+}
 
 function errorMessage(err) {
     return (err && err.message) || String(err);
@@ -136,18 +141,29 @@ router.get('/users', Authorization, async (req, res) => {
             .max('last_watched_at as last_watched_at')
             .groupBy('user_id')
             .as('h');
+        const episodes = knex('episode_history')
+            .select('user_id')
+            .count('* as episodes')
+            .sum('watched_seconds as seconds')
+            .max('last_watched_at as last_watched_at')
+            .groupBy('user_id')
+            .as('e');
         const saved = knex('watchlist').select('user_id').count('* as saved').groupBy('user_id').as('w');
 
         const rows = await knex('users as u')
             .leftJoin(history, 'h.user_id', 'u.id')
+            .leftJoin(episodes, 'e.user_id', 'u.id')
             .leftJoin(saved, 'w.user_id', 'u.id')
-            .select('u.id', 'u.username', 'u.email', 'u.role', 'u.created_at', 'h.movies', 'h.seconds', 'h.last_watched_at', 'w.saved')
+            .select('u.id', 'u.username', 'u.email', 'u.role', 'u.created_at', 'h.movies', 'h.seconds', 'h.last_watched_at',
+                'e.episodes', 'e.seconds as episode_seconds', 'e.last_watched_at as episode_watched_at', 'w.saved')
             .orderBy('u.id');
 
-        res.status(200).json(rows.map(row => ({
+        res.status(200).json(rows.map(({ episode_seconds, episode_watched_at, ...row }) => ({
             ...row,
             movies: toNumber(row.movies),
-            seconds: Math.round(toNumber(row.seconds)),
+            episodes: toNumber(row.episodes),
+            seconds: Math.round(toNumber(row.seconds) + toNumber(episode_seconds)),
+            last_watched_at: [row.last_watched_at, episode_watched_at].filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null,
             saved: toNumber(row.saved)
         })));
     } catch(err) {
@@ -164,19 +180,33 @@ router.get('/user/:id', Authorization, async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const history = await req.knex('watch_history as h')
-            .join('movies as m', 'm.imdb_code', 'h.imdb_code')
-            .where('h.user_id', user.id)
-            .orderBy('h.last_watched_at', 'desc')
-            .limit(12)
-            .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image', 'h.position', 'h.duration', 'h.watched_seconds', 'h.completed', 'h.last_watched_at');
+        const [movies, episodes] = await Promise.all([
+            req.knex('watch_history as h')
+                .join('movies as m', 'm.imdb_code', 'h.imdb_code')
+                .where('h.user_id', user.id)
+                .orderBy('h.last_watched_at', 'desc')
+                .limit(12)
+                .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image', 'h.position', 'h.duration', 'h.watched_seconds', 'h.completed', 'h.last_watched_at'),
+            req.knex('episode_history as h')
+                .join('series as s', 's.imdb_code', 'h.imdb_code')
+                .where('h.user_id', user.id)
+                .orderBy('h.last_watched_at', 'desc')
+                .limit(12)
+                .select('s.imdb_code', 's.title', 's.year', 's.small_cover_image', 'h.season', 'h.episode', 'h.position', 'h.duration', 'h.watched_seconds', 'h.completed', 'h.last_watched_at')
+        ]);
+        const history = newestFirst([...movies, ...episodes], 'last_watched_at').slice(0, 12);
 
-        const watchlist = await req.knex('watchlist as w')
-            .join('movies as m', 'm.imdb_code', 'w.imdb_code')
-            .where('w.user_id', user.id)
-            .orderBy('w.created_at', 'desc')
-            .limit(12)
-            .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image', 'w.created_at');
+        const [savedMovies, savedSeries] = await Promise.all([
+            req.knex('watchlist as w')
+                .join('movies as m', 'm.imdb_code', 'w.imdb_code')
+                .where('w.user_id', user.id)
+                .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image', 'w.created_at'),
+            req.knex('watchlist as w')
+                .join('series as s', 's.imdb_code', 'w.imdb_code')
+                .where('w.user_id', user.id)
+                .select('s.imdb_code', 's.title', 's.year', 's.small_cover_image', 'w.created_at')
+        ]);
+        const watchlist = newestFirst([...savedMovies, ...savedSeries], 'created_at').slice(0, 12);
 
         res.json({ user: publicUser(user), history, watchlist });
     } catch(err) {
@@ -256,7 +286,8 @@ router.get('/stats', Authorization, async (req, res) => {
         const weekAgo = new Date(Date.now() - 7 * DAY);
         const monthAgo = new Date(Date.now() - 30 * DAY);
 
-        const [users, admins, newUsers, movies, categories, plays, finished, watched, activeUsers, saved, requests] = await Promise.all([
+        const [users, admins, newUsers, movies, categories, plays, finished, watched, activeUsers, saved, requests,
+            series, seriesCategories, episodePlays, episodesFinished, episodeSeconds] = await Promise.all([
             count(knex('users')),
             count(knex('users').where({ role: 'admin' })),
             count(knex('users').where('created_at', '>', monthAgo)),
@@ -265,9 +296,17 @@ router.get('/stats', Authorization, async (req, res) => {
             count(knex('watch_history')),
             count(knex('watch_history').where({ completed: true })),
             knex('watch_history').sum('watched_seconds as seconds').first(),
-            knex('watch_history').where('last_watched_at', '>', weekAgo).countDistinct('user_id as count').first(),
+            // Users who watched a movie or an episode
+            knex.from(knex('watch_history').select('user_id').where('last_watched_at', '>', weekAgo)
+                .union(knex('episode_history').select('user_id').where('last_watched_at', '>', weekAgo)).as('a'))
+                .countDistinct('user_id as count').first(),
             count(knex('watchlist')),
-            count(knex('access_requests').whereNull('invited_at'))
+            count(knex('access_requests').whereNull('invited_at')),
+            count(knex('series')),
+            count(knex('series_categories')),
+            count(knex('episode_history')),
+            count(knex('episode_history').where({ completed: true })),
+            knex('episode_history').sum('watched_seconds as seconds').first()
         ]);
 
         const torrents = req.torrentManager ? req.torrentManager.getStats() : null;
@@ -277,13 +316,17 @@ router.get('/stats', Authorization, async (req, res) => {
         res.status(200).json({
             users: { count: users, admins, newThisMonth: newUsers, activeThisWeek: toNumber(activeUsers && activeUsers.count) },
             movies: { count: movies },
+            series: { count: series, categories: seriesCategories },
             categories: { count: categories, nextRefresh: req.nextRefresh ? req.nextRefresh() : null },
             watching: {
                 plays,
                 finished,
-                seconds: Math.round(toNumber(watched && watched.seconds)),
+                episodePlays,
+                episodesFinished,
+                seconds: Math.round(toNumber(watched && watched.seconds) + toNumber(episodeSeconds && episodeSeconds.seconds)),
                 saved
             },
+            conversions: req.playback ? { ...req.playback.hls.stats(), ...req.playback.abilities } : null,
             requests: { pending: requests },
             torrents,
             mail: { configured: mail.configured, current: mail.current, uptime: mail.uptime, checking: mail.checking },
@@ -308,27 +351,51 @@ router.get('/stats', Authorization, async (req, res) => {
 // What people watched lately and the most watched movies
 router.get('/activity', Authorization, async (req, res) => {
     try {
-        const recent = await req.knex('watch_history as h')
-            .join('users as u', 'u.id', 'h.user_id')
-            .join('movies as m', 'm.imdb_code', 'h.imdb_code')
-            .orderBy('h.last_watched_at', 'desc')
-            .limit(15)
-            .select('u.id as user_id', 'u.username', 'm.imdb_code', 'm.title', 'm.year', 'm.small_cover_image',
-                'h.position', 'h.duration', 'h.completed', 'h.last_watched_at');
+        const [recentMovies, recentEpisodes] = await Promise.all([
+            req.knex('watch_history as h')
+                .join('users as u', 'u.id', 'h.user_id')
+                .join('movies as m', 'm.imdb_code', 'h.imdb_code')
+                .orderBy('h.last_watched_at', 'desc')
+                .limit(15)
+                .select('u.id as user_id', 'u.username', 'm.imdb_code', 'm.title', 'm.year', 'm.small_cover_image',
+                    'h.position', 'h.duration', 'h.completed', 'h.last_watched_at'),
+            req.knex('episode_history as h')
+                .join('users as u', 'u.id', 'h.user_id')
+                .join('series as s', 's.imdb_code', 'h.imdb_code')
+                .orderBy('h.last_watched_at', 'desc')
+                .limit(15)
+                .select('u.id as user_id', 'u.username', 's.imdb_code', 's.title', 's.year', 's.small_cover_image',
+                    'h.season', 'h.episode', 'h.position', 'h.duration', 'h.completed', 'h.last_watched_at')
+        ]);
+        const recent = newestFirst([...recentMovies, ...recentEpisodes], 'last_watched_at').slice(0, 15);
 
-        const top = await req.knex('watch_history as h')
-            .join('movies as m', 'm.imdb_code', 'h.imdb_code')
-            .groupBy('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image')
-            .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image')
-            .countDistinct('h.user_id as viewers')
-            .sum('h.watched_seconds as seconds')
-            .orderBy([{ column: 'viewers', order: 'desc' }, { column: 'seconds', order: 'desc' }])
-            .limit(8);
+        const [topMovies, topSeries] = await Promise.all([
+            req.knex('watch_history as h')
+                .join('movies as m', 'm.imdb_code', 'h.imdb_code')
+                .groupBy('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image')
+                .select('m.imdb_code', 'm.title', 'm.year', 'm.small_cover_image')
+                .countDistinct('h.user_id as viewers')
+                .sum('h.watched_seconds as seconds')
+                .orderBy([{ column: 'viewers', order: 'desc' }, { column: 'seconds', order: 'desc' }])
+                .limit(8),
+            req.knex('episode_history as h')
+                .join('series as s', 's.imdb_code', 'h.imdb_code')
+                .groupBy('s.imdb_code', 's.title', 's.year', 's.small_cover_image')
+                .select('s.imdb_code', 's.title', 's.year', 's.small_cover_image')
+                .countDistinct('h.user_id as viewers')
+                .sum('h.watched_seconds as seconds')
+                .orderBy([{ column: 'viewers', order: 'desc' }, { column: 'seconds', order: 'desc' }])
+                .limit(8)
+        ]);
+        const top = [
+            ...topMovies.map(movie => ({ ...movie, type: 'movie' })),
+            ...topSeries.map(series => ({ ...series, type: 'series' }))
+        ]
+            .map(item => ({ ...item, viewers: toNumber(item.viewers), seconds: Math.round(toNumber(item.seconds)) }))
+            .sort((a, b) => b.viewers - a.viewers || b.seconds - a.seconds)
+            .slice(0, 8);
 
-        res.json({
-            recent,
-            top: top.map(movie => ({ ...movie, viewers: toNumber(movie.viewers), seconds: Math.round(toNumber(movie.seconds)) }))
-        });
+        res.json({ recent, top });
     } catch(err) {
         logger.error('Error fetching activity: ' + errorMessage(err));
         res.status(500).json({ message: 'Error fetching the activity' });
@@ -349,7 +416,7 @@ async function timed(check) {
 router.get('/health', Authorization, async (req, res) => {
     const mailCheck = getMailStatus().current ? Promise.resolve() : checkMail();
 
-    const [database, tmdb, yts] = await Promise.all([
+    const [database, tmdb, yts, addons] = await Promise.all([
         timed(() => req.knex.raw('select 1')),
         timed(async () => {
             if (!process.env.TMDB_API_KEY) throw new Error('TMDB_API_KEY is not set');
@@ -359,6 +426,15 @@ router.get('/health', Authorization, async (req, res) => {
             const response = await axios.get(`${YTS_API_URL}/list_movies.json`, { params: { limit: 1 }, timeout: CHECK_TIMEOUT });
             if (!response.data || response.data.status !== 'ok') throw new Error('Unexpected answer from the YTS API');
             return YTS_API_URL;
+        }),
+        // The torrent add-ons that find episodes. Working means at least one of them answers.
+        timed(async () => {
+            const urls = addonUrls();
+            if (!urls.length) throw new Error('No torrent add-on is set (STREAM_ADDONS)');
+            const answers = await Promise.allSettled(urls.map(url => axios.get(`${url}/manifest.json`, { timeout: CHECK_TIMEOUT })));
+            const working = urls.filter((url, index) => answers[index].status === 'fulfilled').map(addonName);
+            if (!working.length) throw new Error(`${urls.map(addonName).join(', ')} can't be reached`);
+            return working.length === urls.length ? working.join(', ') : `${working.join(', ')} (${urls.length - working.length} not answering)`;
         }),
         mailCheck
     ]);
@@ -370,6 +446,11 @@ router.get('/health', Authorization, async (req, res) => {
         : { ok: false, error: 'The torrent client is not running' };
 
     const mail = getMailStatus();
+    const tools = req.playback ? req.playback.tools : { available: false };
+    const converting = req.playback ? req.playback.hls.stats() : { jobs: 0 };
+    const ffmpeg = tools.available
+        ? { ok: true, detail: `ffmpeg ${tools.version || ''}, ${converting.jobs} ${converting.jobs === 1 ? 'conversion' : 'conversions'} running` }
+        : { ok: false, error: "ffmpeg isn't installed, episodes in formats the browser can't play won't work" };
 
     res.json({
         checkedAt: new Date().toISOString(),
@@ -378,7 +459,9 @@ router.get('/health', Authorization, async (req, res) => {
             { id: 'mail', name: 'Mail server', ok: !!(mail.current && mail.current.ok), latency: mail.current && mail.current.latency, error: mail.current && mail.current.error, detail: mail.host ? `${mail.host}:${mail.port}` : null, checkedAt: mail.current && mail.current.at },
             { id: 'tmdb', name: 'TMDB API', ...tmdb, detail: tmdb.ok ? 'Movie lists and metadata' : null },
             { id: 'yts', name: 'YTS API', ...yts },
-            { id: 'torrents', name: 'Torrent client', ...torrents }
+            { id: 'addons', name: 'Torrent add-ons', ...addons },
+            { id: 'torrents', name: 'Torrent client', ...torrents },
+            { id: 'ffmpeg', name: 'Video conversion', ...ffmpeg }
         ],
         mail
     });
@@ -413,9 +496,18 @@ router.get('/categories', Authorization, async (req, res) => {
             const movies = typeof row.movies === 'string' ? JSON.parse(row.movies) : row.movies;
             return { id: row.id, name: row.name, movies: Array.isArray(movies) ? movies.length : 0, created_at: row.created_at };
         });
+        const seriesRows = await req.knex('series_categories').select('id', 'name', 'series', 'created_at').orderBy('id');
+        const seriesCategories = seriesRows.map(row => ({
+            id: row.id,
+            name: row.name,
+            series: Array.isArray(row.series) ? row.series.length : 0,
+            created_at: row.created_at
+        }));
 
         res.json({
             categories,
+            seriesCategories,
+            seriesRefreshedAt: seriesRows.length ? seriesRows[0].created_at : null,
             refreshedAt: rows.length ? rows[0].created_at : null,
             nextRefresh: req.nextRefresh ? req.nextRefresh() : null,
             refreshing: !!refreshing

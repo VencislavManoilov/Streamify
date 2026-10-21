@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+const { parseEpisodes } = require('./releaseInfo');
 
 // Public trackers used together with DHT to find peers for a magnet link
 const TRACKERS = [
@@ -15,7 +16,8 @@ const TRACKERS = [
 ];
 
 const INFO_HASH = /^[0-9a-f]{40}$/;
-const VIDEO_FILE = /\.(mp4|m4v|webm)$/i;
+const VIDEO_FILE = /\.(mp4|m4v|webm|mkv|avi|mov)$/i;
+const SAMPLE_FILE = /(^|[^a-z])sample([^a-z]|$)/i;
 const SUBTITLE_FILE = /\.(srt|vtt)$/i;
 const ENGLISH_SUBTITLE = /(^|[^a-z])(en|eng|english)([^a-z]|$)/i;
 
@@ -27,20 +29,64 @@ function normalizeHash(hash) {
     return infoHash;
 }
 
-// The biggest video file is the movie (some releases also ship a sample clip)
-function pickVideoFile(torrent) {
-    return torrent.files
-        .filter(file => VIDEO_FILE.test(file.name))
-        .sort((a, b) => b.length - a.length)[0] || null;
+function biggest(files) {
+    return files.slice().sort((a, b) => b.length - a.length)[0] || null;
 }
 
-function pickSubtitleFile(torrent) {
-    const subtitles = torrent.files.filter(file => SUBTITLE_FILE.test(file.name));
+// Whether a file of a season pack is the episode. Packs name their files "Show.S01E02.mkv", or put
+// "02 - Title.mkv" in a "Season 1" folder.
+function isEpisodeFile(file, season, episode) {
+    const fromName = parseEpisodes(file.name);
+    if (fromName.episodes.length) {
+        return fromName.episodes.includes(episode) && (!fromName.seasons.length || fromName.seasons.includes(season));
+    }
+    // Only the folder the file is in, the pack's own folder above it may name every season
+    const fromPath = parseEpisodes(path.basename(path.dirname(file.path || '')));
+    if (fromPath.seasons.length && !fromPath.seasons.includes(season)) return false;
+    const number = /^(?:e|ep|episode)?[ ._-]?(\d{1,3})(?:[ ._-]|$)/i.exec(file.name);
+    return !!number && Number(number[1]) === episode && (fromPath.seasons.includes(season) || season === 1);
+}
+
+/**
+ * The video file to stream. Without `selector` it's the biggest one, which is the movie (some releases also
+ * ship a sample clip). For an episode `selector` is { fileIdx, filename, season, episode }: the file the
+ * torrent add-on named, or else the one whose name says it's that episode.
+ */
+function pickVideoFile(torrent, selector = null) {
+    const videos = torrent.files.filter(file => VIDEO_FILE.test(file.name));
+    if (!selector) return biggest(videos);
+
+    const named = Number.isInteger(selector.fileIdx) ? torrent.files[selector.fileIdx] : null;
+    if (named && VIDEO_FILE.test(named.name)) return named;
+
+    const episodes = videos.filter(file => !SAMPLE_FILE.test(file.name));
+    if (selector.filename) {
+        const byName = episodes.find(file => file.name === selector.filename);
+        if (byName) return byName;
+    }
+    if (Number.isInteger(selector.season) && Number.isInteger(selector.episode)) {
+        const matches = episodes.filter(file => isEpisodeFile(file, selector.season, selector.episode));
+        if (matches.length) return biggest(matches);
+    }
+    // A torrent of just this episode
+    return episodes.length === 1 ? episodes[0] : null;
+}
+
+// English subtitles that come with the video. In a season pack only the ones of this episode count.
+function pickSubtitleFile(torrent, selector = null) {
+    const video = pickVideoFile(torrent, selector);
+    let subtitles = torrent.files.filter(file => SUBTITLE_FILE.test(file.name));
+
+    if (selector && video) {
+        const base = video.name.replace(VIDEO_FILE, '');
+        subtitles = subtitles.filter(file => (file.path || '').includes(base)
+            || isEpisodeFile({ name: file.name, path: file.path }, selector.season, selector.episode));
+    }
+
     const english = subtitles.find(file => ENGLISH_SUBTITLE.test(file.name.replace(SUBTITLE_FILE, '')));
     if (english) return english;
 
     // YTS releases ship the English subtitles named exactly like the movie file
-    const video = pickVideoFile(torrent);
     if (video) {
         const base = video.name.replace(VIDEO_FILE, '');
         const sameName = subtitles.find(file => file.name.replace(SUBTITLE_FILE, '') === base);
@@ -110,10 +156,11 @@ class TorrentManager {
         return this.client;
     }
 
-    magnetURI(infoHash, { name, url } = {}) {
+    // `trackers` are extra ones that know the torrent, e.g. the private-ish trackers torrent add-ons list
+    magnetURI(infoHash, { name, url, trackers = [] } = {}) {
         let magnet = `magnet:?xt=urn:btih:${infoHash}`;
         if (name) magnet += `&dn=${encodeURIComponent(name)}`;
-        for (const tracker of TRACKERS) {
+        for (const tracker of new Set([...TRACKERS, ...trackers.filter(tracker => /^(udp|https?|wss?):\/\//.test(tracker))])) {
             magnet += `&tr=${encodeURIComponent(tracker)}`;
         }
         // Fetching the .torrent file is usually faster than getting the metadata from peers
@@ -160,7 +207,8 @@ class TorrentManager {
             name: source.name || infoHash,
             torrent,
             streams: 0,
-            preloaded: false,
+            // Indexes of the files whose start was already asked for
+            preloaded: new Set(),
             addedAt: Date.now(),
             lastActivity: Date.now()
         };
@@ -231,16 +279,18 @@ class TorrentManager {
     }
 
     /**
-     * Loads the torrent metadata and warms up the start of the movie (where the MP4 header is),
-     * plus the spot the viewer is going to resume from when `at` (0-1) is given.
+     * Loads the torrent metadata and warms up the start of the video (where the MP4 header is),
+     * plus the spot the viewer is going to resume from when `at` (0-1) is given. `file` picks the video
+     * of a torrent with many (see pickVideoFile).
      */
-    async preloadTorrent(hash, source, { at } = {}) {
+    async preloadTorrent(hash, source, { at, file: selector = null } = {}) {
         const entry = this.ensure(hash, source);
         const torrent = await entry.ready;
-        const file = pickVideoFile(torrent);
+        const file = pickVideoFile(torrent, selector);
+        const index = file ? torrent.files.indexOf(file) : -1;
 
-        if (file && !entry.preloaded) {
-            entry.preloaded = true;
+        if (file && !entry.preloaded.has(index)) {
+            entry.preloaded.add(index);
             this.selectBytes(torrent, file, 0, this.preloadBytes);
             if (at > 0 && at < 1) {
                 this.selectBytes(torrent, file, Math.floor(file.length * at), this.preloadBytes);
@@ -267,13 +317,13 @@ class TorrentManager {
 
     // Reads the English subtitles shipped inside a torrent. Only torrents that are already loaded are
     // used: starting a whole torrent just for its subtitles is what made the server download movies twice.
-    async readSubtitleFile(hash, timeout = 20000) {
+    async readSubtitleFile(hash, timeout = 20000, selector = null) {
         const entry = this.get(hash);
         if (!entry) return null;
 
         const read = async () => {
             const torrent = await entry.ready;
-            const file = pickSubtitleFile(torrent);
+            const file = pickSubtitleFile(torrent, selector);
             if (!file) return null;
             return { name: file.name, data: Buffer.from(await file.arrayBuffer()) };
         };
@@ -369,7 +419,18 @@ class TorrentManager {
     }
 }
 
+// The bytes `start` to `start + length` of a torrent file, downloading them first when needed
+async function readFileRange(file, start, length) {
+    const end = Math.min(file.length, start + length) - 1;
+    const chunks = [];
+    for await (const chunk of file[Symbol.asyncIterator]({ start, end: Math.max(end, start + 1) })) {
+        chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks).subarray(0, end - start + 1);
+}
+
 TorrentManager.pickVideoFile = pickVideoFile;
+TorrentManager.readFileRange = readFileRange;
 TorrentManager.pickSubtitleFile = pickSubtitleFile;
 TorrentManager.normalizeHash = normalizeHash;
 

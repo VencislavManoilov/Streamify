@@ -1,5 +1,5 @@
 <template>
-    <MovieCatalog />
+    <MovieCatalog :kind="kind" />
 </template>
 
 <script>
@@ -10,6 +10,13 @@ export default {
     name: 'HomePage',
     components: {
         MovieCatalog
+    },
+    props: {
+        // 'movie' or 'series'
+        kind: {
+            type: String,
+            default: 'movie'
+        }
     }
 };
 </script>

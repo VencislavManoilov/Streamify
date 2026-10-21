@@ -18,6 +18,25 @@
                     />
                 </section>
 
+                <section v-if="audioTracks.length > 1" class="group">
+                    <div class="group-head">
+                        <h3>Audio</h3>
+                    </div>
+                    <div class="chips" role="radiogroup" aria-label="Audio">
+                        <button
+                            v-for="track in audioTracks"
+                            :key="track.index"
+                            type="button"
+                            tabindex="-1"
+                            role="radio"
+                            class="chip"
+                            :class="{ active: track.index === currentAudio }"
+                            :aria-checked="track.index === currentAudio"
+                            @click="$emit('select-audio', track.index)"
+                        >{{ track.label }}</button>
+                    </div>
+                </section>
+
                 <section class="group">
                     <div class="group-head">
                         <h3>Subtitles</h3>
@@ -181,9 +200,23 @@ export default {
         subtitleStyle: {
             type: Object,
             required: true
+        },
+        // [{ index, label }] when the video has more than one language
+        audioTracks: {
+            type: Array,
+            default: () => []
+        },
+        currentAudio: {
+            type: Number,
+            default: null
+        },
+        // 'movie' or 'episode', for the texts
+        mediaLabel: {
+            type: String,
+            default: 'movie'
         }
     },
-    emits: ['update:speed', 'select-track', 'update:offset', 'update:subtitle-style'],
+    emits: ['update:speed', 'select-track', 'update:offset', 'update:subtitle-style', 'select-audio'],
     data() {
         return {
             view: 'main',
@@ -213,7 +246,7 @@ export default {
         trackNote() {
             if (!this.current) return '';
             if (this.current.status === 'loading') return `Loading the ${this.current.label} subtitles…`;
-            if (this.current.status === 'error') return `No ${this.current.label} subtitles were found for this movie.`;
+            if (this.current.status === 'error') return `No ${this.current.label} subtitles were found for this ${this.mediaLabel}.`;
             return '';
         },
         offsetText() {

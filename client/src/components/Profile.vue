@@ -20,28 +20,35 @@
                     <span class="label">{{ stats.moviesWatched === 1 ? 'movie watched' : 'movies watched' }}</span>
                 </div>
                 <div class="stat">
+                    <span class="value">{{ stats.episodesWatched }}</span>
+                    <span class="label">{{ stats.episodesWatched === 1 ? 'episode watched' : 'episodes watched' }}</span>
+                </div>
+                <div class="stat">
                     <span class="value">{{ timeWatched }}</span>
                     <span class="label">time watched</span>
                 </div>
                 <div class="stat">
-                    <span class="value">{{ stats.moviesFinished }}</span>
+                    <span class="value">{{ stats.moviesFinished + stats.episodesFinished }}</span>
                     <span class="label">finished</span>
                 </div>
             </section>
 
-            <MovieList :category="watchlistRow">
+            <MovieList :category="watchlistRow" show-type>
                 <template #empty>
                     <p v-if="watchlistError" class="row-message">{{ watchlistError }}</p>
-                    <p v-else class="row-message">The movies you save with the bookmark button will show up here until you've watched them.</p>
+                    <p v-else class="row-message">The movies and series you save with the bookmark button will show up here until you've watched them.</p>
                 </template>
             </MovieList>
 
             <p v-if="historyError" class="message">{{ historyError }}</p>
-            <MovieList v-else :category="historyRow" remove-label="Remove from watch history" @remove="removeFromHistory">
+            <MovieList v-else :category="historyRow" show-type remove-label="Remove from watch history" @remove="removeFromHistory">
                 <template #empty>
                     <div class="empty">
-                        <p>The movies you watch will show up here, most recent first.</p>
-                        <router-link to="/" class="browse">Browse movies</router-link>
+                        <p>The movies and series you watch will show up here, most recent first.</p>
+                        <div class="browse-links">
+                            <router-link to="/" class="browse">Browse movies</router-link>
+                            <router-link to="/series" class="browse secondary">Browse series</router-link>
+                        </div>
                     </div>
                 </template>
             </MovieList>
@@ -73,7 +80,7 @@ export default {
             loading: true,
             historyError: null,
             watchlistError: null,
-            stats: { moviesWatched: 0, secondsWatched: 0, moviesFinished: 0 },
+            stats: { moviesWatched: 0, secondsWatched: 0, moviesFinished: 0, episodesWatched: 0, episodesFinished: 0, seriesWatched: 0 },
             history: []
         };
     },
@@ -111,7 +118,7 @@ export default {
         ]);
 
         if (history.status === 'fulfilled') {
-            this.stats = history.value.data.stats;
+            this.stats = { ...this.stats, ...history.value.data.stats };
             this.history = history.value.data.history;
         } else if (!loggedOut(history.reason)) {
             this.historyError = "Your watch history couldn't be loaded. Refresh the page to try again.";
@@ -128,28 +135,37 @@ export default {
             session.logout();
             this.$router.replace({ name: 'Welcome' });
         },
-        // Changes the statistics by what one entry of the history adds to them (`sign` -1 takes it away)
-        countEntry(progress, sign) {
-            this.stats = {
-                moviesWatched: this.stats.moviesWatched + sign,
-                secondsWatched: Math.max(0, this.stats.secondsWatched + sign * progress.watchedSeconds),
-                moviesFinished: this.stats.moviesFinished + (progress.completed ? sign : 0)
-            };
+        // Changes the statistics by what one entry of the history adds to them (`sign` -1 takes it away). A series
+        // entry stands for all its watched episodes.
+        countEntry(entry, sign) {
+            const stats = { ...this.stats };
+            if (entry.type === 'series') {
+                stats.seriesWatched += sign;
+                stats.episodesWatched += sign * entry.episodesWatched;
+                stats.episodesFinished += sign * entry.episodesFinished;
+                stats.secondsWatched = Math.max(0, stats.secondsWatched + sign * entry.watchedSeconds);
+            } else {
+                stats.moviesWatched += sign;
+                stats.moviesFinished += entry.progress.completed ? sign : 0;
+                stats.secondsWatched = Math.max(0, stats.secondsWatched + sign * entry.progress.watchedSeconds);
+            }
+            this.stats = stats;
         },
         // The poster goes right away and comes back if the server can't remove it. Undo puts it back.
         async removeFromHistory(movie) {
             const index = this.history.findIndex(entry => entry.imdb_code === movie.imdb_code);
             if (index === -1) return;
+            const isSeries = movie.type === 'series';
             this.history = this.history.filter(entry => entry.imdb_code !== movie.imdb_code);
-            this.countEntry(movie.progress, -1);
+            this.countEntry(movie, -1);
 
             let removed;
             try {
-                removed = await watchHistory.remove(movie.imdb_code);
+                removed = isSeries ? await watchHistory.removeSeries(movie.imdb_code) : await watchHistory.remove(movie.imdb_code);
             } catch (err) {
                 this.putBack(movie, index);
                 if (!err.response || err.response.status !== 401) {
-                    notifications.show({ tone: 'danger', title: "Couldn't remove the movie", message: 'Check your connection and try again.' });
+                    notifications.show({ tone: 'danger', title: `Couldn't remove the ${isSeries ? 'series' : 'movie'}`, message: 'Check your connection and try again.' });
                 }
                 return;
             }
@@ -158,21 +174,27 @@ export default {
                 id: `history-${movie.imdb_code}`,
                 icon: 'removed',
                 title: 'Removed from your watch history',
-                message: movie.title,
+                message: isSeries ? `${movie.title} and its ${movie.episodesWatched === 1 ? 'episode' : `${movie.episodesWatched} episodes`}` : movie.title,
                 duration: 6000,
                 // Nothing to put back when it was already gone from the server
                 action: removed ? { label: 'Undo', handler: () => this.undoRemove(movie, index, removed) } : null
             });
         },
         async undoRemove(movie, index, removed) {
-            this.putBack({ ...movie, progress: removed }, index);
+            const isSeries = movie.type === 'series';
+            const restored = isSeries ? movie : { ...movie, progress: removed };
+            this.putBack(restored, index);
             try {
-                await watchHistory.restore(movie.imdb_code, removed);
+                if (isSeries) {
+                    await watchHistory.restoreSeries(movie.imdb_code, removed);
+                } else {
+                    await watchHistory.restore(movie.imdb_code, removed);
+                }
             } catch (err) {
                 this.history = this.history.filter(entry => entry.imdb_code !== movie.imdb_code);
-                this.countEntry(removed, -1);
+                this.countEntry(restored, -1);
                 if (!err.response || err.response.status !== 401) {
-                    notifications.show({ tone: 'danger', title: "Couldn't put the movie back", message: 'Check your connection and try again.' });
+                    notifications.show({ tone: 'danger', title: `Couldn't put the ${isSeries ? 'series' : 'movie'} back`, message: 'Check your connection and try again.' });
                 }
             }
         },
@@ -181,7 +203,7 @@ export default {
             const history = this.history.slice();
             history.splice(Math.min(index, history.length), 0, movie);
             this.history = history;
-            this.countEntry(movie.progress, 1);
+            this.countEntry(movie, 1);
         }
     }
 };
@@ -312,6 +334,22 @@ export default {
 
 .browse:hover {
     background: #ffffff;
+}
+
+.browse-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.browse.secondary {
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.browse.secondary:hover {
+    background: var(--surface-hover);
 }
 
 @media (max-width: 640px) {

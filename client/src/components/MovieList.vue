@@ -26,6 +26,8 @@
                 <div v-for="movie in category.movies" :key="movie.imdb_code" class="movie">
                     <button type="button" class="poster" :aria-label="posterLabel(movie)" @click="movieClick(movie, $event)">
                         <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" loading="lazy" draggable="false" />
+                        <span v-if="badge(movie)" class="badge" :class="badge(movie).tone" aria-hidden="true">{{ badge(movie).text }}</span>
+                        <span v-if="movie.type === 'series' && movie.progress" class="episode-tag" aria-hidden="true">{{ episodeTag(movie) }}</span>
                         <span v-if="movie.progress" class="progress" aria-hidden="true">
                             <span class="progress-fill" :style="{ width: progressPercent(movie) + '%' }"></span>
                         </span>
@@ -55,12 +57,16 @@
             </div>
         </div>
 
-        <MovieDetails v-if="selectedMovie" :movie="selectedMovie" @close="selectedMovie = null" />
+        <SeriesDetails v-if="selectedMovie && selectedMovie.type === 'series'" :series="selectedMovie" @close="selectedMovie = null" />
+        <MovieDetails v-else-if="selectedMovie" :movie="selectedMovie" @close="selectedMovie = null" />
     </section>
 </template>
 
 <script>
+import { episodeLabel } from '../playback';
+import { freshness } from '../seriesData';
 import MovieDetails from './MovieDetails.vue';
+import SeriesDetails from './SeriesDetails.vue';
 
 const POSTER_GAP = 12;
 
@@ -90,11 +96,22 @@ export default {
         removeLabel: {
             type: String,
             default: ''
+        },
+        // Marks the series in a row that has movies too
+        showType: {
+            type: Boolean,
+            default: false
+        },
+        // For rows that are all new episodes anyway
+        hideFresh: {
+            type: Boolean,
+            default: false
         }
     },
     emits: ['remove'],
     components: {
-        MovieDetails
+        MovieDetails,
+        SeriesDetails
     },
     watch: {
         'category.movies'() {
@@ -265,9 +282,21 @@ export default {
             if (completed && position >= duration * 0.95) return 100;
             return Math.min(100, Math.max(3, (position / duration) * 100));
         },
+        // "New episode" on a series that aired one lately, "Series" in a row that also has movies
+        badge(movie) {
+            if (movie.type !== 'series') return null;
+            const fresh = this.hideFresh ? '' : freshness(movie);
+            if (fresh) return { text: fresh, tone: 'fresh' };
+            return this.showType ? { text: 'Series', tone: 'plain' } : null;
+        },
+        episodeTag(movie) {
+            return episodeLabel(movie.progress.season, movie.progress.episode);
+        },
         posterLabel(movie) {
-            if (!movie.progress) return movie.title;
-            return `${movie.title}, ${Math.round(this.progressPercent(movie))}% watched`;
+            const name = movie.type === 'series' ? `${movie.title} (series)` : movie.title;
+            if (!movie.progress) return name;
+            const where = movie.type === 'series' ? `, ${this.episodeTag(movie)}` : '';
+            return `${name}${where}, ${Math.round(this.progressPercent(movie))}% watched`;
         }
     },
     // Ensure we clean up any animations when component is destroyed
@@ -393,6 +422,50 @@ export default {
     -moz-user-select: none;
     -webkit-user-select: none;
     user-select: none;
+    pointer-events: none;
+}
+
+/* "New episode" on a series that aired one lately, or what kind of title it is in a mixed row */
+.badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 3px 8px;
+    border-radius: 7px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1.35;
+    pointer-events: none;
+}
+
+.badge.fresh {
+    background: var(--accent);
+    color: #1a1406;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.badge.plain {
+    background: rgba(8, 9, 16, 0.72);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    color: var(--text);
+}
+
+/* The episode of a series in the history, just above its progress */
+.episode-tag {
+    position: absolute;
+    left: 8px;
+    bottom: 18px;
+    padding: 2px 8px;
+    border-radius: 7px;
+    background: rgba(8, 9, 16, 0.74);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
     pointer-events: none;
 }
 

@@ -18,6 +18,9 @@ const yts = require('./utils/yts');
 const { sendMail, startMailMonitor } = require('./utils/mailer');
 const srtToVtt = require('srt-to-vtt');
 const logger = require('./utils/logger');
+const { Playback } = require('./utils/playback');
+const seriesData = require('./utils/series');
+const { findSource } = require('./utils/streamSources');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -92,7 +95,20 @@ const STREAM_STALL_TIMEOUT = (Number(process.env.STREAM_STALL_SECONDS) || 5 * 60
 const SUBTITLE_CACHE_DIR = path.join(__dirname, 'subtitle_cache');
 const IMDB_CODE = /^tt\d+$/;
 
+// Episodes the browser can't play as they are get converted with ffmpeg (see utils/playback.js)
+const playback = new Playback({
+    port: PORT,
+    cacheDir: process.env.HLS_CACHE_PATH || path.join(os.tmpdir(), 'streamify-hls'),
+    transcode: {
+        enabled: process.env.TRANSCODE_VIDEO !== '0',
+        maxHeight: Number(process.env.TRANSCODE_MAX_HEIGHT) || 1080,
+        preset: process.env.TRANSCODE_PRESET || 'veryfast',
+        crf: Number(process.env.TRANSCODE_CRF) || 21
+    }
+});
+
 let categories = [];
+let seriesCategories = [];
 
 const withKnex = (req, res, next) => {
     req.knex = knex;
@@ -170,7 +186,12 @@ const adminRoute = require('./routes/admin');
 app.use('/admin', async (req, res, next) => {
     req.knex = knex;
     req.torrentManager = global.torrentManager;
-    req.fetchTrendingMovies = fetchTrendingMovies;
+    req.playback = playback;
+    // A manual refresh renews the movie rows and the series rows
+    req.fetchTrendingMovies = async () => {
+        await fetchTrendingMovies();
+        await refreshSeriesCategories();
+    };
     req.nextRefresh = nextRefresh;
     req.tmdb = tmdb;
     next();
@@ -193,6 +214,15 @@ app.use('/movies', (req, res, next) => {
     req.uploadMovie = uploadMovie;
     next();
 }, moviesRoute);
+
+const seriesRoute = require('./routes/series');
+app.use('/series', (req, res, next) => {
+    req.knex = knex;
+    req.tmdb = tmdb;
+    req.playback = playback;
+    req.seriesCategories = () => seriesCategories;
+    next();
+}, seriesRoute);
 
 app.get("/categories", withKnex, Authorization, (req, res) => {
     try {
@@ -253,7 +283,7 @@ function waitForDrain(res) {
 
 // Copies bytes `start`-`end` of a torrent file into the response. The headers are already sent at
 // this point, so errors just end the response (the browser then asks for the rest again).
-async function pipeTorrentFile(file, start, end, res, release) {
+async function pipeTorrentFile(file, start, end, res, release, stallTimeout = STREAM_STALL_TIMEOUT) {
     const iterator = file[Symbol.asyncIterator]({ start, end });
     let remaining = end - start + 1;
     let lastProgress = Date.now();
@@ -262,7 +292,7 @@ async function pipeTorrentFile(file, start, end, res, release) {
     // A stream nobody reads (a paused or forgotten tab) is closed after a while, so the torrent can go
     // idle and be cleaned up instead of staying busy forever
     const stallTimer = setInterval(() => {
-        if (Date.now() - lastProgress > STREAM_STALL_TIMEOUT) res.destroy();
+        if (stallTimeout && Date.now() - lastProgress > stallTimeout) res.destroy();
     }, 30 * 1000);
 
     res.once('close', () => {
@@ -336,9 +366,14 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
         return res.status(404).json({ error: "MP4 file not found in torrent" });
     }
 
+    serveTorrentFile(req, res, file, lease.release);
+});
+
+// Answers a (range) request for a torrent file. `release` gives the torrent's lease back when it's done.
+function serveTorrentFile(req, res, file, release, stallTimeout = STREAM_STALL_TIMEOUT) {
     const ranges = req.headers.range ? rangeParser(file.length, req.headers.range, { combine: true }) : null;
     if (ranges === -1) {
-        lease.release();
+        release();
         res.setHeader('Content-Range', `bytes */${file.length}`);
         return res.status(416).send('Invalid Range');
     }
@@ -359,17 +394,165 @@ app.get("/stream/:imdb_code/:torrent_hash", async (req, res) => {
     }
 
     if (req.method === 'HEAD') {
-        lease.release();
+        release();
         return res.end();
     }
 
-    pipeTorrentFile(file, start, end, res, lease.release);
+    pipeTorrentFile(file, start, end, res, release, stallTimeout);
+}
+
+// The saved torrent of an episode a stream route asks for, or null
+async function episodeSource(params) {
+    const season = Number(params.season);
+    const episode = Number(params.episode);
+    if (!IMDB_CODE.test(params.imdb_code) || !Number.isInteger(season) || !Number.isInteger(episode)) return null;
+    return findSource(knex, params.imdb_code, season, episode, params.hash);
+}
+
+function episodeName(params) {
+    return `${params.imdb_code} S${String(params.season).padStart(2, '0')}E${String(params.episode).padStart(2, '0')}`;
+}
+
+// An episode the browser plays as it is. Only torrents found for the episode can be streamed.
+app.get("/stream/series/:imdb_code/:season/:episode/:hash/:file", async (req, res) => {
+    let closed = false;
+    res.on('close', () => { closed = true; });
+
+    let source;
+    try {
+        source = await episodeSource(req.params);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+    if (!source) {
+        return res.status(404).json({ error: "Episode not found" });
+    }
+
+    let opened;
+    try {
+        opened = await playback.open(source, { fileIdx: Number(req.params.file), season: Number(req.params.season), episode: Number(req.params.episode) }, episodeName(req.params), 60 * 1000);
+    } catch (err) {
+        if (!closed) res.status(err.status || 503).json({ error: "This episode can't be loaded right now. Try again in a moment or pick another source.", code: err.code });
+        return;
+    }
+    if (closed) {
+        return opened.lease.release();
+    }
+
+    serveTorrentFile(req, res, opened.file, opened.lease.release);
+});
+
+// An episode converted for the browser: its playlist (index.m3u8) and segments (seg-<n>.ts), see utils/hls.js
+app.get("/hls/series/:imdb_code/:season/:episode/:hash/:file/:variant/:name", async (req, res) => {
+    const { variant, name } = req.params;
+    const fileIndex = Number(req.params.file);
+    const segment = /^seg-(\d+)\.ts$/.exec(name);
+    if ((name !== 'index.m3u8' && !segment) || !Number.isInteger(fileIndex)) {
+        return res.status(404).json({ error: "Not found" });
+    }
+
+    try {
+        const source = await episodeSource(req.params);
+        if (!source) {
+            return res.status(404).json({ error: "Episode not found" });
+        }
+
+        // After a restart of the server the session is made again, which needs the torrent's file list
+        let session = playback.hls.get(`${source.hash}-${fileIndex}-${variant}`);
+        if (!session) {
+            const label = episodeName(req.params);
+            const opened = await playback.open(source, { fileIdx: fileIndex, season: Number(req.params.season), episode: Number(req.params.episode) }, label, 60 * 1000);
+            try {
+                if (opened.fileIndex !== fileIndex) {
+                    return res.status(404).json({ error: "Episode not found" });
+                }
+                const inspected = await playback.inspect(source.hash, fileIndex, opened.file);
+                session = playback.session({ hash: source.hash, fileIndex, variant, inspected, name: label });
+            } finally {
+                opened.lease.release();
+            }
+        }
+
+        if (!segment) {
+            session.touch();
+            res.set('Cache-Control', 'no-cache');
+            return res.type('application/vnd.apple.mpegurl').send(session.playlist());
+        }
+
+        const file = await session.segment(Number(segment[1]));
+        res.set('Cache-Control', 'private, max-age=3600');
+        res.type('video/mp2t').sendFile(file, (err) => {
+            if (err && !res.headersSent) res.status(404).end();
+        });
+    } catch (err) {
+        if (!res.headersSent) {
+            res.status(err.status || 500).json({ error: err.status ? err.message : "The episode couldn't be converted", code: err.code });
+        }
+    }
+});
+
+// Where ffmpeg reads torrents from. The secret in the address keeps everyone else out.
+app.get("/internal/:secret/torrents/:hash/:file", async (req, res) => {
+    const torrentSource = req.params.secret === playback.secret ? playback.knownTorrent(String(req.params.hash).toLowerCase()) : null;
+    if (!torrentSource) {
+        return res.status(404).end();
+    }
+
+    let closed = false;
+    res.on('close', () => { closed = true; });
+
+    let lease;
+    try {
+        lease = await global.torrentManager.acquire(req.params.hash, torrentSource);
+    } catch (err) {
+        return closed ? undefined : res.status(503).end();
+    }
+    if (closed) {
+        return lease.release();
+    }
+
+    const file = lease.torrent.files[Number(req.params.file)];
+    if (!file) {
+        lease.release();
+        return res.status(404).end();
+    }
+
+    // ffmpeg is paused while it's far ahead of the viewer, so its stream may sit still for long
+    serveTorrentFile(req, res, file, lease.release, 0);
+});
+
+// How a loaded torrent is doing, for the player to tell a slow torrent from a fine one
+app.get("/torrents/:hash/stats", withKnex, Authorization, (req, res) => {
+    let entry;
+    try {
+        entry = global.torrentManager.get(req.params.hash);
+    } catch (err) {
+        return res.status(400).json({ error: "Invalid torrent hash" });
+    }
+    if (!entry) {
+        return res.json({ loaded: false });
+    }
+
+    const torrent = entry.torrent;
+    const index = Number(req.query.file);
+    const file = torrent.ready && Number.isInteger(index) ? torrent.files[index] : null;
+    res.json({
+        loaded: true,
+        ready: !!torrent.ready,
+        peers: torrent.numPeers,
+        downloadSpeed: Math.round(torrent.downloadSpeed),
+        progress: file ? file.progress : torrent.progress,
+        downloaded: file ? file.downloaded : torrent.downloaded,
+        length: file ? file.length : (torrent.length || 0)
+    });
 });
 
 // OpenSubtitles API configuration
 const OPENSUBS_API_URL = "https://api.opensubtitles.com/api/v1";
 let openSubsToken = null;
 let tokenExpiry = null;
+// The login in progress. OpenSubtitles allows one per second, and both subtitle tracks ask at once.
+let openSubsLogin = null;
 const OPENSUBS_USER_AGENT = "Streamify v1.0.0"; // Define a specific user agent for our app
 
 // Function to login to OpenSubtitles and get access token
@@ -379,6 +562,15 @@ async function getOpenSubtitlesToken() {
         return openSubsToken;
     }
 
+    if (!openSubsLogin) {
+        openSubsLogin = loginToOpenSubtitles().finally(() => {
+            openSubsLogin = null;
+        });
+    }
+    return openSubsLogin;
+}
+
+async function loginToOpenSubtitles() {
     try {
         const response = await axios.post(`${OPENSUBS_API_URL}/login`, {
             username: process.env.OPENSUBS_USERNAME,
@@ -407,8 +599,9 @@ async function getOpenSubtitlesToken() {
     }
 }
 
-// Function to search and download subtitles for a movie
-async function getSubtitles(imdbId, language = 'en') {
+// Function to search and download subtitles for a movie, or for an episode of a series with `episode`
+// ({ season, episode })
+async function getSubtitles(imdbId, language = 'en', episode = null) {
     try {
         // Create cache directory if it doesn't exist
         if (!fs.existsSync(SUBTITLE_CACHE_DIR)) {
@@ -416,7 +609,8 @@ async function getSubtitles(imdbId, language = 'en') {
         }
 
         // Check if we already have this subtitle cached
-        const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}_${language}.vtt`);
+        const episodeKey = episode ? `_S${episode.season}E${episode.episode}` : '';
+        const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}${episodeKey}_${language}.vtt`);
         if (fs.existsSync(cacheFilePath)) {
             return cacheFilePath;
         }
@@ -427,12 +621,14 @@ async function getSubtitles(imdbId, language = 'en') {
         // Format the IMDb ID properly (OpenSubtitles expects the 'tt' prefix)
         const formattedImdbId = imdbId.startsWith('tt') ? imdbId : `tt${imdbId}`;
 
+        // Episodes are found by the series' IMDb code, which OpenSubtitles wants as a plain number
+        const params = episode
+            ? { parent_imdb_id: Number(formattedImdbId.slice(2)), season_number: episode.season, episode_number: episode.episode, languages: language }
+            : { imdb_id: formattedImdbId, languages: language };
+
         // Search for subtitles - note we're using the proper OpenSubtitles format
         const searchResponse = await axios.get(`${OPENSUBS_API_URL}/subtitles`, {
-            params: {
-                imdb_id: formattedImdbId,
-                languages: language
-            },
+            params,
             headers: {
                 'Content-Type': 'application/json',
                 'Api-Key': process.env.OPENSUBS_API_KEY,
@@ -531,15 +727,17 @@ function convertSrtToVtt(srt) {
     });
 }
 
-// English subtitles shipped inside the torrent that is being watched (YTS releases usually have them)
-async function getTorrentSubtitles(imdbId, torrentHash) {
+// English subtitles shipped inside the torrent that is being watched (YTS releases usually have them).
+// `selector` picks the episode's file in a season pack (see TorrentManager.pickVideoFile).
+async function getTorrentSubtitles(imdbId, torrentHash, selector = null) {
     const infoHash = TorrentManager.normalizeHash(torrentHash);
-    const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}_${infoHash}_en.vtt`);
+    const episodeKey = selector ? `_S${selector.season}E${selector.episode}` : '';
+    const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}${episodeKey}_${infoHash}_en.vtt`);
     if (fs.existsSync(cacheFilePath)) {
         return cacheFilePath;
     }
 
-    const subtitles = await global.torrentManager.readSubtitleFile(infoHash);
+    const subtitles = await global.torrentManager.readSubtitleFile(infoHash, 20000, selector);
     if (!subtitles) {
         return null;
     }
@@ -585,6 +783,47 @@ app.get("/subtitles/:imdb_code", async (req, res) => {
     res.type('text/vtt').sendFile(subtitlePath, (err) => {
         if (err && !res.headersSent) {
             logger.error("Error streaming subtitle file: " + err);
+            res.status(500).json({ error: "Failed to stream subtitles" });
+        }
+    });
+});
+
+// Subtitles of an episode: English ones from its torrent when it has them, the rest from OpenSubtitles
+app.get("/subtitles/series/:imdb_code/:season/:episode", async (req, res) => {
+    const { imdb_code } = req.params;
+    const season = Number(req.params.season);
+    const episode = Number(req.params.episode);
+    const language = String(req.query.lang || 'en');
+    const torrentHash = req.query.hash ? String(req.query.hash) : null;
+    const fileIndex = Number(req.query.file);
+
+    if (!IMDB_CODE.test(imdb_code) || !Number.isInteger(season) || !Number.isInteger(episode)) {
+        return res.status(400).json({ error: "IMDb code, season and episode are required" });
+    }
+    if (!/^[a-z]{2}$/.test(language)) {
+        return res.status(400).json({ error: "Invalid language code" });
+    }
+
+    let subtitlePath = null;
+    if (language === "en" && torrentHash) {
+        try {
+            const selector = { fileIdx: Number.isInteger(fileIndex) ? fileIndex : null, season, episode };
+            subtitlePath = await getTorrentSubtitles(imdb_code, torrentHash, selector);
+        } catch (err) {
+            logger.warn(`Could not use the subtitles from the torrent: ${err.message}`);
+        }
+    }
+
+    try {
+        if (!subtitlePath) {
+            subtitlePath = await getSubtitles(imdb_code, language, { season, episode });
+        }
+    } catch (err) {
+        return res.status(404).json({ error: "Subtitles not found" });
+    }
+
+    res.type('text/vtt').sendFile(subtitlePath, (err) => {
+        if (err && !res.headersSent) {
             res.status(500).json({ error: "Failed to stream subtitles" });
         }
     });
@@ -645,16 +884,47 @@ async function searchMovies(query) {
     return codes.map(code => byCode.get(code)).filter(Boolean);
 }
 
+// How well a title matches what was searched: 3 the same, 2 starts with it, 1 has every word of it
+function titleMatch(title, query) {
+    const normalize = text => String(text || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+    const name = normalize(title);
+    const wanted = normalize(query);
+    if (!wanted) return 0;
+    if (name === wanted || name.replace(/^the /, '') === wanted.replace(/^the /, '')) return 3;
+    if (name.startsWith(wanted)) return 2;
+    return wanted.split(' ').every(word => name.split(' ').includes(word)) ? 1 : 0;
+}
+
+// Movies and series together: the closest titles first, otherwise taking turns in each list's own order
+function mergeResults(query, movies, series) {
+    const items = [
+        ...movies.map((movie, rank) => ({ item: { ...movie, type: 'movie' }, rank, type: 0 })),
+        ...series.map((show, rank) => ({ item: show, rank, type: 1 }))
+    ];
+    return items
+        .map(entry => ({ ...entry, match: titleMatch(entry.item.title, query) }))
+        .sort((a, b) => b.match - a.match || a.rank - b.rank || a.type - b.type)
+        .map(entry => entry.item);
+}
+
 app.get("/search", withKnex, Authorization, async (req, res) => {
     const query = String(req.query.query || '').trim();
     if (!query) return res.status(400).json({ error: "Query is required" });
 
-    try {
-        res.json({ movies: await searchMovies(query) });
-    } catch (error) {
-        logger.error("Search error: " + error.message);
-        res.status(500).json({ error: "Failed to fetch movies" });
+    const [movies, series] = await Promise.allSettled([
+        searchMovies(query),
+        seriesData.searchSeries(knex, tmdb, query)
+    ]);
+    if (movies.status === 'rejected' && series.status === 'rejected') {
+        logger.error(`Search error: ${movies.reason.message} / ${series.reason.message}`);
+        return res.status(500).json({ error: "Failed to search" });
     }
+    if (movies.status === 'rejected') logger.warn("Movie search failed: " + movies.reason.message);
+    if (series.status === 'rejected') logger.warn("Series search failed: " + series.reason.message);
+
+    const foundMovies = movies.status === 'fulfilled' ? movies.value : [];
+    const foundSeries = series.status === 'fulfilled' ? series.value.map(seriesData.publicSeries) : [];
+    res.json({ results: mergeResults(query, foundMovies, foundSeries) });
 });
 
 async function loadCategories() {
@@ -673,6 +943,19 @@ async function loadCategories() {
         logger.error("Database error: " + dbError);
         return Promise.reject(dbError);
     }
+}
+
+async function loadSeriesCategories() {
+    seriesCategories = (await seriesData.loadSeriesCategories(knex)).filter(category => category.movies.length > 0);
+}
+
+// Resolves once the rows are there; which of their series have torrents is checked afterwards
+async function refreshSeriesCategories() {
+    const checkAll = await seriesData.fetchSeriesCategories(knex, tmdb);
+    await loadSeriesCategories();
+    checkAll()
+        .then(loadSeriesCategories)
+        .catch(err => logger.warn("Could not check which series have torrents: " + err.message));
 }
 
 const fetchTrendingMovies = async () => {
@@ -808,6 +1091,7 @@ async function refreshCategories() {
 
     try {
         await fetchTrendingMovies();
+        await refreshSeriesCategories();
 
         await emailAdmin(
             'Successfully Refreshed the Categories! Streamify',
@@ -885,6 +1169,7 @@ app.use((err, req, res, next) => {
             }
 
             await loadCategories();
+            await loadSeriesCategories();
 
             // The server was down during the last weekly slot, so catch up now without delaying the start
             const lastRefresh = await knex('categories').min('created_at as at').first();
@@ -904,6 +1189,13 @@ app.use((err, req, res, next) => {
             server.listen(PORT, () => {
                 logger.info(`Server is running on port ${PORT}`);
             });
+
+            // The series rows came later than the movie ones, so a server that has movies may not have them yet.
+            // They're loaded in the background, the page shows them once they're there.
+            if (!seriesCategories.length && !(await knex('series_categories').first('id'))) {
+                logger.info("Fetching series for categories...");
+                refreshSeriesCategories().catch(err => logger.error("Failed to fetch series categories: " + err.message));
+            }
 
             startMailMonitor();
         });

@@ -1,32 +1,47 @@
 const express = require('express');
 const Authorization = require('../middleware/Auth');
+const { publicSeries } = require('../utils/series');
 
 const router = express.Router();
 
 router.use(Authorization);
 
-// The movies the user saved for later, most recently added first
+// The movies and series the user saved for later, most recently added first
 router.get('/', async (req, res) => {
     try {
-        const movies = await req.knex('watchlist as w')
-            .join('movies as m', 'm.imdb_code', 'w.imdb_code')
-            .where('w.user_id', req.user.id)
-            .orderBy('w.created_at', 'desc')
-            .select('m.*');
+        const [movies, series] = await Promise.all([
+            req.knex('watchlist as w')
+                .join('movies as m', 'm.imdb_code', 'w.imdb_code')
+                .where('w.user_id', req.user.id)
+                .select('m.*', 'w.created_at as saved_at'),
+            req.knex('watchlist as w')
+                .join('series as s', 's.imdb_code', 'w.imdb_code')
+                .where('w.user_id', req.user.id)
+                .select('s.*', 'w.created_at as saved_at')
+        ]);
 
-        res.json({ movies });
+        const saved = [
+            ...movies.map(movie => ({ ...movie, type: 'movie' })),
+            ...series.map(row => publicSeries(row))
+        ].sort((a, b) => new Date(b.saved_at) - new Date(a.saved_at))
+            .map(({ saved_at, ...item }) => item);
+
+        res.json({ movies: saved });
     } catch (err) {
         res.status(500).json({ error: 'Failed to load the watchlist' });
     }
 });
 
-// Adding a movie that is already on the list changes nothing
+// Adding a movie or series that is already on the list changes nothing
 router.put('/:imdb_code', async (req, res) => {
     const { imdb_code } = req.params;
 
     try {
-        const movie = await req.knex('movies').where({ imdb_code }).first('imdb_code');
-        if (!movie) {
+        const [movie, series] = await Promise.all([
+            req.knex('movies').where({ imdb_code }).first('imdb_code'),
+            req.knex('series').where({ imdb_code }).first('imdb_code')
+        ]);
+        if (!movie && !series) {
             return res.status(404).json({ error: 'Movie not found' });
         }
 

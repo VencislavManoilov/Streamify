@@ -36,6 +36,7 @@
                         <span class="who">
                             <span class="name">{{ person.name }}</span>
                             <span v-if="person.character" class="character">{{ person.character }}</span>
+                            <span v-if="isPage && person.episodes > 1" class="episodes">{{ person.episodes }} episodes</span>
                         </span>
                     </li>
                 </ul>
@@ -78,7 +79,7 @@ function languageName(code) {
 export default {
     name: 'MovieExtras',
     props: {
-        // From /movies/:imdb_code/details; null when TMDB doesn't know the movie
+        // From /movies/:imdb_code/details or /series/:imdb_code/details; null when TMDB doesn't know it
         details: {
             type: Object,
             default: null
@@ -97,11 +98,23 @@ export default {
         isPage() {
             return this.variant === 'page';
         },
+        // Series details name their creators where movies name a director
+        isSeries() {
+            return Array.isArray(this.details && this.details.creators);
+        },
         skeletonCount() {
             return this.isPage ? 8 : 6;
         },
         crew() {
             const details = this.details;
+            if (this.isSeries) {
+                return [
+                    { label: 'Created by', people: details.creators },
+                    { label: details.networks && details.networks.length > 1 ? 'Networks' : 'Network', people: details.networks }
+                ]
+                    .filter(row => row.people && row.people.length)
+                    .map(row => ({ label: row.label, names: row.people.slice(0, 4).join(', ') }));
+            }
             const rows = [
                 { label: details.directors.length > 1 ? 'Directors' : 'Director', people: details.directors },
                 { label: details.writers.length > 1 ? 'Writers' : 'Writer', people: details.writers }
@@ -122,13 +135,24 @@ export default {
             const languages = details.languages && details.languages.length
                 ? details.languages.join(', ')
                 : (details.originalLanguage ? languageName(details.originalLanguage) : '');
-            const facts = [
+            const facts = this.isSeries ? [
+                { label: 'First aired', value: details.firstAired ? formatDate(details.firstAired) : '' },
+                { label: 'Last aired', value: details.lastAired ? formatDate(details.lastAired) : '' },
+                { label: 'Type', value: details.type && details.type !== 'Scripted' ? details.type : '' },
+                { label: 'Original title', value: details.originalTitle }
+            ] : [
                 { label: 'Released', value: details.releaseDate ? formatDate(details.releaseDate) : '' },
                 { label: 'Original title', value: details.originalTitle },
                 { label: details.languages && details.languages.length > 1 ? 'Languages' : 'Language', value: languages },
                 { label: details.countries && details.countries.length > 1 ? 'Countries' : 'Country', value: (details.countries || []).join(', ') }
             ];
-            if (this.isPage) {
+            if (this.isSeries) {
+                facts.push(
+                    { label: details.languages && details.languages.length > 1 ? 'Languages' : 'Language', value: languages },
+                    { label: details.countries && details.countries.length > 1 ? 'Countries' : 'Country', value: (details.countries || []).join(', ') }
+                );
+                if (this.isPage) facts.push({ label: 'Studios', value: (details.studios || []).join(', '), wide: true });
+            } else if (this.isPage) {
                 facts.push(
                     { label: 'Studios', value: (details.studios || []).join(', '), wide: true },
                     { label: 'Budget', value: details.budget ? money.format(details.budget) : '' },
@@ -258,6 +282,12 @@ export default {
     -webkit-line-clamp: 2;
     overflow: hidden;
     font-weight: 650;
+    line-height: 1.3;
+}
+
+.episodes {
+    color: var(--text-faint);
+    font-size: 0.82rem;
     line-height: 1.3;
 }
 

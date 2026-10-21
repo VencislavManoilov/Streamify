@@ -5,9 +5,9 @@
         <main class="results">
             <template v-if="search">
                 <h1 class="searchTitle">Results for “{{ search }}”</h1>
-                <p v-if="!loading && !error && movies.length === 1" class="count">1 movie</p>
+                <p v-if="!loading && !error && typed.length === 1" class="count">{{ countLabel }}</p>
 
-                <template v-if="!loading && !error && movies.length > 1">
+                <template v-if="!loading && !error && typed.length > 1">
                     <div class="toolbar">
                         <p class="count">
                             {{ countLabel }}
@@ -50,17 +50,22 @@
             <LoadingSpinner v-if="loading" overlay label="Searching" />
             <p v-else-if="error" class="message">{{ error }}</p>
             <div v-else-if="search && movies.length === 0" class="message">
-                <p>No movies found for “{{ search }}”.</p>
+                <p>Nothing found for “{{ search }}”.</p>
                 <p class="hint">Check the spelling or try another title.</p>
             </div>
-            <p v-else-if="!search" class="message">Type a movie title in the search bar to find it.</p>
+            <p v-else-if="!search" class="message">Type the title of a movie or series in the search bar to find it.</p>
+            <div v-else-if="!typed.length" class="message">
+                <p>{{ type === 'series' ? 'No series' : 'No movies' }} found for “{{ search }}”.</p>
+                <button type="button" class="clear" @click="showAll">Show everything</button>
+            </div>
             <div v-else-if="!visibleMovies.length" class="message">
-                <p>None of these movies is in all of the selected categories.</p>
+                <p>None of these titles is in all of the selected categories.</p>
                 <button type="button" class="clear" @click="clearGenres">Clear filters</button>
             </div>
             <div v-else class="movies">
                 <button v-for="movie in visibleMovies" :key="movie.imdb_code" type="button" class="movie" :aria-label="posterLabel(movie)" @click="selectedMovie = movie">
                     <img :src="movie.medium_cover_image" :alt="movie.title" class="movie-image" loading="lazy" />
+                    <span v-if="movie.type === 'series'" class="type" :class="{ fresh: freshness(movie) }" aria-hidden="true">{{ freshness(movie) || seasonsText(movie) }}</span>
                     <span v-if="sortText(movie)" class="badge" aria-hidden="true">
                         <svg v-if="sortField === 'rating'" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" /></svg>
                         {{ sortText(movie) }}
@@ -69,15 +74,18 @@
             </div>
         </main>
 
-        <MovieDetails v-if="selectedMovie" :movie="selectedMovie" @close="selectedMovie = null" />
+        <SeriesDetails v-if="selectedMovie && selectedMovie.type === 'series'" :series="selectedMovie" @close="selectedMovie = null" />
+        <MovieDetails v-else-if="selectedMovie" :movie="selectedMovie" @close="selectedMovie = null" />
     </div>
 </template>
 
 <script>
 import api from '../api';
+import { freshness } from '../seriesData';
 import AppHeader from './AppHeader.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
 import MovieDetails from './MovieDetails.vue';
+import SeriesDetails from './SeriesDetails.vue';
 
 function formatRuntime(minutes) {
     const hours = Math.floor(minutes / 60);
@@ -126,7 +134,8 @@ export default {
     components: {
         AppHeader,
         LoadingSpinner,
-        MovieDetails
+        MovieDetails,
+        SeriesDetails
     },
     computed: {
         // Sorting and filters live in the address, so coming back from a movie keeps them
@@ -152,10 +161,19 @@ export default {
         selectedGenres() {
             return [].concat(this.$route.query.genre || []).filter(genre => typeof genre === 'string' && genre);
         },
-        // Movies in every selected category
+        // Set by the switch next to the search bar; every new search shows everything
+        type() {
+            const type = this.$route.query.type;
+            return type === 'movie' || type === 'series' ? type : 'all';
+        },
+        typed() {
+            if (this.type === 'all') return this.movies;
+            return this.movies.filter(movie => (movie.type === 'series' ? 'series' : 'movie') === this.type);
+        },
+        // Results in every selected category
         filteredMovies() {
-            if (!this.selectedGenres.length) return this.movies;
-            return this.movies.filter(movie => this.selectedGenres.every(genre => (movie.genres || []).includes(genre)));
+            if (!this.selectedGenres.length) return this.typed;
+            return this.typed.filter(movie => this.selectedGenres.every(genre => (movie.genres || []).includes(genre)));
         },
         visibleMovies() {
             const field = SORT_FIELDS[this.sortField];
@@ -187,7 +205,12 @@ export default {
                 .sort((a, b) => a.name.localeCompare(b.name));
         },
         countLabel() {
-            const total = `${this.movies.length} movies`;
+            const series = this.typed.filter(movie => movie.type === 'series').length;
+            const movies = this.typed.length - series;
+            const parts = [];
+            if (movies) parts.push(`${movies} ${movies === 1 ? 'movie' : 'movies'}`);
+            if (series) parts.push(`${series} series`);
+            const total = parts.join(' and ');
             return this.selectedGenres.length ? `${this.filteredMovies.length} of ${total}` : total;
         }
     },
@@ -219,7 +242,7 @@ export default {
             try {
                 const response = await api.get('/search', { params: { query } });
                 if (requestId !== this.requestId) return;
-                this.movies = response.data.movies;
+                this.movies = response.data.results;
             } catch (err) {
                 if (requestId !== this.requestId) return;
                 if (!err.response || err.response.status !== 401) {
@@ -245,6 +268,15 @@ export default {
         clearGenres() {
             this.updateQuery({ genre: undefined });
         },
+        showAll() {
+            this.updateQuery({ type: undefined });
+        },
+        freshness,
+        seasonsText(series) {
+            const count = series.number_of_seasons;
+            if (!count) return 'Series';
+            return `${count} ${count === 1 ? 'season' : 'seasons'}`;
+        },
         // The value the results are sorted by, shown on each poster
         sortText(movie) {
             const field = SORT_FIELDS[this.sortField];
@@ -253,8 +285,9 @@ export default {
             return isKnown(value) ? field.format(value) : '';
         },
         posterLabel(movie) {
+            const name = movie.type === 'series' ? `${movie.title} (series)` : movie.title;
             const text = this.sortText(movie);
-            return text ? `${movie.title}, ${SORT_FIELDS[this.sortField].label.toLowerCase()} ${text}` : movie.title;
+            return text ? `${name}, ${SORT_FIELDS[this.sortField].label.toLowerCase()} ${text}` : name;
         }
     },
 };
@@ -478,6 +511,27 @@ export default {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+/* Series are told apart from movies by how many seasons they have, or "New episode" when one aired lately */
+.type {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 3px 8px;
+    border-radius: 7px;
+    background: rgba(8, 9, 16, 0.74);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    color: var(--text);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.type.fresh {
+    background: var(--accent);
+    color: #1a1406;
 }
 
 /* What the results are sorted by */

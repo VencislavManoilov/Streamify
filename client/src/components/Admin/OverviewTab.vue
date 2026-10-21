@@ -34,17 +34,17 @@
                 <div class="card tile">
                     <span class="label">Hours watched</span>
                     <span class="value num">{{ hours(stats.watching.seconds) }}</span>
-                    <span class="note">{{ stats.watching.plays }} movies started, {{ stats.watching.finished }} finished</span>
+                    <span class="note">{{ stats.watching.plays }} movies and {{ stats.watching.episodePlays || 0 }} episodes started</span>
                 </div>
                 <div class="card tile">
                     <span class="label">Streaming now</span>
                     <span class="value num">{{ streaming }}</span>
-                    <span class="note">{{ torrents ? `${torrents.totalTorrents} of ${torrents.maxTorrents} torrents loaded` : 'torrent client is off' }}</span>
+                    <span class="note">{{ torrents ? `${torrents.totalTorrents} of ${torrents.maxTorrents} torrents loaded` : 'torrent client is off' }}<template v-if="stats.conversions && stats.conversions.jobs">, {{ stats.conversions.jobs }} converting</template></span>
                 </div>
                 <div class="card tile">
-                    <span class="label">Movie library</span>
-                    <span class="value num">{{ stats.movies.count.toLocaleString() }}</span>
-                    <span class="note">in {{ stats.categories.count }} categories</span>
+                    <span class="label">Library</span>
+                    <span class="value num">{{ stats.movies.count.toLocaleString() }}<small>movies</small></span>
+                    <span class="note">{{ stats.series ? `${stats.series.count.toLocaleString()} series, ` : '' }}{{ stats.categories.count + (stats.series ? stats.series.categories : 0) }} categories</span>
                 </div>
                 <button type="button" class="card tile tile-button" @click="$emit('open', 'requests')">
                     <span class="label">Access requests</span>
@@ -62,12 +62,12 @@
                 </div>
                 <LoadingSpinner v-if="!activity" :size="32" label="Loading the activity" />
                 <ul v-else-if="activity.recent.length" class="list">
-                    <li v-for="item in activity.recent" :key="`${item.user_id}-${item.imdb_code}`">
+                    <li v-for="item in activity.recent" :key="`${item.user_id}-${item.imdb_code}-${item.season}-${item.episode}`">
                         <div class="movie-row">
                             <img v-if="item.small_cover_image" class="poster" :src="item.small_cover_image" alt="" loading="lazy" />
                             <span v-else class="poster"></span>
                             <div class="text">
-                                <div class="title">{{ item.title }}</div>
+                                <div class="title">{{ item.title }}<span v-if="item.season !== undefined" class="faint"> · S{{ item.season }} E{{ item.episode }}</span></div>
                                 <div class="meta">
                                     <strong class="who">{{ item.username }}</strong>
                                     · {{ item.completed ? 'finished' : `${percent(item)}% in` }}
@@ -94,13 +94,13 @@
                             <span v-else class="poster"></span>
                             <div class="text">
                                 <div class="title">{{ movie.title }}</div>
-                                <div class="meta">{{ movie.year }} · {{ duration(movie.seconds) }} watched</div>
+                                <div class="meta">{{ movie.type === 'series' ? 'Series' : movie.year }} · {{ duration(movie.seconds) }} watched</div>
                             </div>
                         </div>
                         <span class="pill num">{{ movie.viewers }} {{ movie.viewers === 1 ? 'viewer' : 'viewers' }}</span>
                     </li>
                 </ol>
-                <p v-else class="empty">No movies watched yet.</p>
+                <p v-else class="empty">Nothing watched yet.</p>
             </div>
         </div>
 
