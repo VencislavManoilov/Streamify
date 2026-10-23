@@ -7,6 +7,7 @@
         :class="{ started: start }"
         :style="captionStyle"
         @mousedown.capture="keepFocus"
+        @mousemove.capture="ignoreStillMoves"
     >
         <!-- Plyr owns this element; its source and subtitle tracks are set from code -->
         <video ref="video" controls playsinline preload="none" :poster="poster"></video>
@@ -329,7 +330,10 @@ export default {
     },
     mounted() {
         this.onKeydown = (event) => this.handleKey(event);
-        this.onPointerUp = () => this.dropFocus();
+        this.onPointerUp = () => {
+            this.releaseControls();
+            this.dropFocus();
+        };
         this.onPointerDown = (event) => this.closeSettingsOutside(event);
         this.onResize = () => this.fitSettings();
         window.addEventListener('keydown', this.onKeydown, true);
@@ -938,6 +942,18 @@ export default {
         // and volume bars are range inputs, which don't move at all without their mousedown (dropFocus blurs them).
         keepFocus(event) {
             if (event.target.closest('button, [role="slider"]:not(input)')) event.preventDefault();
+        },
+        // Plyr shows its controls, and the pointer, on every mousemove. Some setups send one without the mouse
+        // moving, e.g. when the page hides the pointer, which would bring both straight back.
+        ignoreStillMoves(event) {
+            const last = this.lastMouse;
+            this.lastMouse = { x: event.screenX, y: event.screenY };
+            if (last && last.x === event.screenX && last.y === event.screenY) event.stopPropagation();
+        },
+        // Plyr keeps its controls up while one of them is pressed, and only sees the press end when the button is
+        // let go over them. Let go anywhere else, they (and the pointer) would never hide again.
+        releaseControls() {
+            if (this.player && this.player.elements.controls) this.player.elements.controls.pressed = false;
         },
         // Plyr's seek and volume sliders do take the focus while they're dragged, so it's dropped afterwards
         dropFocus() {
