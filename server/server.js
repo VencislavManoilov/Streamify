@@ -20,6 +20,7 @@ const srtToVtt = require('srt-to-vtt');
 const logger = require('./utils/logger');
 const { Playback } = require('./utils/playback');
 const seriesData = require('./utils/series');
+const { startImdbRatings } = require('./utils/imdbRatings');
 const { findSource } = require('./utils/streamSources');
 const fs = require('fs');
 const os = require('os');
@@ -1198,6 +1199,7 @@ app.use((err, req, res, next) => {
             }
 
             startMailMonitor();
+            startImdbRatings(knex);
         });
     } catch (err) {
         logger.error('Failed to load WebTorrent module: ' + err);

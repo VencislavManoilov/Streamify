@@ -1,6 +1,7 @@
 const axios = require('axios');
 const logger = require('./logger');
 const { getEpisodeSources } = require('./streamSources');
+const imdbRatings = require('./imdbRatings');
 
 /**
  * Series come from TMDB (posters, cast, genres, status...) and their episodes from Cinemeta, Stremio's own
@@ -148,6 +149,9 @@ async function fetchTv(tmdb, tmdbId, { full = false } = {}) {
 }
 
 async function saveRow(knex, row) {
+    // IMDb's rating rather than TMDB's; TMDB's only stays while IMDb's isn't known
+    const imdbRating = await imdbRatings.seriesRating(knex, row.imdb_code);
+    if (imdbRating) row.rating = imdbRating;
     await knex('series').insert(row).onConflict('imdb_code').merge();
     return knex('series').where({ imdb_code: row.imdb_code }).first();
 }
@@ -285,7 +289,8 @@ async function enrich(tmdb, series, seasons) {
                         overview: episode.overview || match.overview,
                         still: match.still || episode.still,
                         runtime: match.runtime,
-                        rating: match.rating || episode.rating
+                        // Cinemeta's ratings come from IMDb, TMDB's are its own users' votes
+                        rating: episode.rating || match.rating
                     };
                 })
             };
@@ -310,9 +315,15 @@ const loadingEpisodes = new Map();
 
 /**
  * Every season with its episodes: [{ number, name, episodes: [{ episode, title, overview, aired, still,
- * runtime, rating }] }], specials last. Kept in the database for half a day (a week for ended shows).
+ * runtime, rating }] }], specials last, with IMDb's episode ratings.
  */
-async function getEpisodes(knex, tmdb, series, { refresh = false } = {}) {
+async function getEpisodes(knex, tmdb, series, options) {
+    const seasons = await loadEpisodes(knex, tmdb, series, options);
+    return imdbRatings.rateEpisodes(knex, series.imdb_code, seasons);
+}
+
+// The seasons from the catalogs. Kept in the database for half a day (a week for ended shows).
+async function loadEpisodes(knex, tmdb, series, { refresh = false } = {}) {
     const saved = await knex('series_episodes').where({ imdb_code: series.imdb_code }).first();
     const keep = AIRING.includes(series.status) ? KEEP_EPISODES_AIRING : KEEP_EPISODES_ENDED;
     if (saved && !refresh && Date.now() - new Date(saved.fetched_at).getTime() < keep) return saved.seasons;

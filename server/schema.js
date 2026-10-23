@@ -100,6 +100,18 @@ const schemaDefinition = {
     fetched_at: { type: 'timestamp', defaultTo: knex.fn.now() },
     created_at: { type: 'timestamp', defaultTo: knex.fn.now() },
   },
+  // IMDb's ratings of the series and of their episodes (see utils/imdbRatings.js). Episode rows have the
+  // series' IMDb code in series_code and IMDb's season and episode numbers; series rows have none.
+  imdb_ratings: {
+    id: { type: 'increments', primary: true },
+    imdb_code: { type: 'string', unique: true, notNullable: true },
+    series_code: { type: 'string', notNullable: false, index: true },
+    season: { type: 'integer', notNullable: false },
+    episode: { type: 'integer', notNullable: false },
+    // Null when IMDb has no rating for the series
+    rating: { type: 'float', notNullable: false },
+    votes: { type: 'integer', notNullable: true, defaultTo: 0 },
+  },
   // Every season and episode of a series, numbered like the torrent add-ons number them (see utils/series.js)
   series_episodes: {
     id: { type: 'increments', primary: true },
@@ -174,6 +186,7 @@ function addColumn(table, columnName, columnProps) {
   if (columnProps.primary) column.primary();
   if (columnProps.notNullable) column.notNullable();
   if (columnProps.unique) column.unique();
+  if (columnProps.index) column.index();
   if (columnProps.defaultTo !== undefined) column.defaultTo(columnProps.defaultTo);
   if (columnProps.references) {
     column.references(columnProps.references);
