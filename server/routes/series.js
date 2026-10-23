@@ -3,6 +3,7 @@ const Authorization = require('../middleware/Auth');
 const logger = require('../utils/logger');
 const series = require('../utils/series');
 const { getEpisodeSources, findSource, rank, healthOf, markFailed } = require('../utils/streamSources');
+const { extractSubtitles } = require('../utils/embeddedSubtitles');
 
 const router = express.Router();
 
@@ -206,6 +207,52 @@ router.post('/:imdb_code/:season/:episode/prepare', async (req, res) => {
     } catch (err) {
         if (!err.code) logger.error(`Could not prepare ${row.title} ${season}x${episode}: ${err.message}`);
         res.status(err.status || 500).json({ error: err.code ? err.message : "The episode couldn't be loaded", code: err.code || 'failed' });
+    }
+});
+
+// The longest stretch of an episode one request reads subtitles from, in seconds
+const MAX_SUBTITLE_STRETCH = 30 * 60;
+
+/**
+ * The lines of a subtitle track inside the episode's file (see utils/embeddedSubtitles.js) from second `from`
+ * to `to`, sent while the file comes in. Each line of the answer is JSON: { cues: [[start, end, text], ...] }
+ * as they're found, then { done: true } or { error }.
+ */
+router.get('/:imdb_code/:season/:episode/subtitles/:hash/:file/:track', async (req, res) => {
+    const season = numberParam(req.params.season);
+    const episode = numberParam(req.params.episode);
+    const fileIndex = numberParam(req.params.file);
+    const track = numberParam(req.params.track);
+    const from = Math.max(0, Number(req.query.from) || 0);
+    const to = Number(req.query.to) > from ? Math.min(Number(req.query.to), from + MAX_SUBTITLE_STRETCH) : from + MAX_SUBTITLE_STRETCH;
+    if (season === null || episode === null || fileIndex === null || track === null || !IMDB_CODE.test(req.params.imdb_code)) {
+        return res.status(404).json({ error: 'Episode not found' });
+    }
+
+    const source = await findSource(req.knex, req.params.imdb_code, season, episode, req.params.hash).catch(() => null);
+    if (!source) return res.status(404).json({ error: 'This torrent is not one of the episode', code: 'no-source' });
+    // ffmpeg reads the torrent through the server, which has to know it for that
+    req.playback.torrentSource(source);
+
+    const stop = new AbortController();
+    res.on('close', () => stop.abort());
+    res.set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+
+    try {
+        await extractSubtitles({
+            inputUrl: req.playback.inputUrl(source.hash, fileIndex),
+            track,
+            from,
+            to,
+            signal: stop.signal,
+            onCues: cues => res.write(`${JSON.stringify({ cues: cues.map(cue => [cue.start, cue.end, cue.text]) })}\n`)
+        });
+        res.end(`${JSON.stringify({ done: true })}\n`);
+    } catch (err) {
+        if (err.code === 'aborted') return;
+        logger.warn(`Could not read subtitle track ${track} of ${req.params.imdb_code} ${season}x${episode}: ${err.message}`);
+        res.end(`${JSON.stringify({ error: "These subtitles couldn't be read" })}\n`);
     }
 });
 

@@ -255,6 +255,27 @@ function languageName(code) {
     }
 }
 
+// The two letter code of a language a video file names, often with three ("eng"), or '' when it names none
+function languageCode(code) {
+    if (!code || code === 'und') return '';
+    try {
+        return Intl.getCanonicalLocales(code)[0].split('-')[0];
+    } catch (err) {
+        return '';
+    }
+}
+
+// What sets a subtitle track inside the video file apart from others in its language: 'Forced' (only the
+// lines in other languages), 'SDH' (for the hard of hearing) or its own name
+function trackDetail(track, name) {
+    // Some files name their tracks "null" or "und"
+    const title = /^(null|undefined|und|none)$/i.test((track.title || '').trim()) ? '' : (track.title || '').trim();
+    if (track.forced || /forced/i.test(title)) return 'Forced';
+    if (track.hearingImpaired || /\b(sdh|cc)\b/i.test(title)) return 'SDH';
+    if (title && !/^\d/.test(title) && title.toLowerCase() !== name.toLowerCase()) return title.slice(0, 24);
+    return '';
+}
+
 function progressKey(season, episode) {
     return `${season}:${episode}`;
 }
@@ -385,15 +406,43 @@ export default {
         playerReady() {
             return this.sourcesState === 'ready' && !!this.selected && !this.prepareError;
         },
-        // English subtitles come from the episode's torrent when it has them
+        // English subtitles come from the episode's torrent when it has them, and from OpenSubtitles otherwise.
+        // The ones inside the video file are read from it while it plays.
         subtitles() {
             if (!this.current) return [];
             const base = `/subtitles/series/${this.imdbCode}/${this.current.season}/${this.current.episode}`;
-            const torrent = this.selected ? `&hash=${this.selected.hash}${this.plan ? `&file=${this.plan.fileIndex}` : ''}` : '';
-            return [
-                { label: 'English', srclang: 'en', src: `${base}?lang=en${torrent}`, default: true },
+            // A season pack has the subtitles of every episode, so the torrent's need the episode's file
+            const torrent = this.plan ? `&hash=${this.selected.hash}&file=${this.plan.fileIndex}` : '';
+            const inFile = this.fileSubtitles;
+            const fileEnglish = inFile.find(track => track.default);
+            const downloaded = [
+                { label: 'English', srclang: 'en', src: `${base}?lang=en${torrent}`, default: !fileEnglish },
                 { label: 'Bulgarian', srclang: 'bg', src: `${base}?lang=bg` }
             ];
+            // The file's own English ones fit the video best. The player turns on the first in the viewer's
+            // language, so they go before the downloaded ones.
+            if (!fileEnglish) return [...downloaded, ...inFile];
+            return [fileEnglish, ...downloaded, ...inFile.filter(track => track !== fileEnglish)];
+        },
+        fileSubtitles() {
+            if (!this.plan || !this.selected || !this.plan.subtitles) return [];
+            const { season, episode } = this.current;
+            const base = `${API_URL}/series/${this.imdbCode}/${season}/${episode}/subtitles/${this.selected.hash}/${this.plan.fileIndex}`;
+            const tracks = this.plan.subtitles.map((track, position) => {
+                const language = languageCode(track.language);
+                const name = languageName(language) || `Track ${position + 1}`;
+                const detail = trackDetail(track, name);
+                return {
+                    detail,
+                    // Like "English SDH · Embedded"
+                    track: { label: `${name}${detail ? ` ${detail}` : ''} · Embedded`, srclang: language || 'und', stream: `${base}/${track.index}`, default: false }
+                };
+            });
+            // Whole English ones before those for the hard of hearing; never the ones with only the foreign lines
+            const english = tracks.filter(({ track, detail }) => track.srclang === 'en' && detail !== 'Forced');
+            const main = english.find(({ detail }) => detail !== 'SDH') || english[0];
+            if (main) main.track.default = true;
+            return tracks.map(({ track }) => track);
         },
         audioTracks() {
             const tracks = (this.plan && this.plan.audioTracks) || [];

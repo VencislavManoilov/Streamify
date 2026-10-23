@@ -642,14 +642,28 @@ async function getSubtitles(imdbId, language = 'en', episode = null) {
             throw new Error(`No subtitles found for IMDb ID ${formattedImdbId} in language ${language}`);
         }
 
-        // Find the best subtitle (highest rated or first available)
+        // The best subtitle: a whole one (not just the foreign lines) made by a person, the highest rated and
+        // then the most downloaded. An episode's must say they're of that episode.
+        const candidates = searchResponse.data.data.filter(({ attributes }) => {
+            if (attributes.foreign_parts_only) return false;
+            if (!episode) return true;
+            const details = attributes.feature_details || {};
+            return details.season_number === episode.season && details.episode_number === episode.episode;
+        });
+        const score = ({ attributes }) => [
+            attributes.machine_translated || attributes.ai_translated ? 0 : 1,
+            attributes.ratings || 0,
+            attributes.download_count || 0
+        ];
         let bestSubtitle = null;
-        for (const sub of searchResponse.data.data) {
-            if (!bestSubtitle ||
-                (sub.attributes.ratings && bestSubtitle.attributes.ratings &&
-                 sub.attributes.ratings > bestSubtitle.attributes.ratings)) {
+        for (const sub of candidates) {
+            if (!bestSubtitle) {
                 bestSubtitle = sub;
+                continue;
             }
+            const [a, b] = [score(sub), score(bestSubtitle)];
+            const better = a.findIndex((value, i) => value !== b[i]);
+            if (better !== -1 && a[better] > b[better]) bestSubtitle = sub;
         }
 
         if (!bestSubtitle) {
@@ -731,9 +745,13 @@ function convertSrtToVtt(srt) {
 // `selector` picks the episode's file in a season pack (see TorrentManager.pickVideoFile).
 async function getTorrentSubtitles(imdbId, torrentHash, selector = null) {
     const infoHash = TorrentManager.normalizeHash(torrentHash);
+    // An episode's are kept with the number of its file in the torrent
     const episodeKey = selector ? `_S${selector.season}E${selector.episode}` : '';
-    const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}${episodeKey}_${infoHash}_en.vtt`);
-    if (fs.existsSync(cacheFilePath)) {
+    const fileKey = selector ? `-${selector.fileIdx}` : '';
+    const cacheFilePath = path.join(SUBTITLE_CACHE_DIR, `${imdbId}${episodeKey}_${infoHash}${fileKey}_en.vtt`);
+    // Reads cut short by the torrent were once kept with zeros in place of the missing end
+    const cached = await fs.promises.readFile(cacheFilePath).catch(() => null);
+    if (cached && !cached.includes(0)) {
         return cacheFilePath;
     }
 
@@ -805,9 +823,10 @@ app.get("/subtitles/series/:imdb_code/:season/:episode", async (req, res) => {
     }
 
     let subtitlePath = null;
-    if (language === "en" && torrentHash) {
+    // The file is needed too: a season pack has the subtitles of every episode
+    if (language === "en" && torrentHash && Number.isInteger(fileIndex)) {
         try {
-            const selector = { fileIdx: Number.isInteger(fileIndex) ? fileIndex : null, season, episode };
+            const selector = { fileIdx: fileIndex, season, episode };
             subtitlePath = await getTorrentSubtitles(imdb_code, torrentHash, selector);
         } catch (err) {
             logger.warn(`Could not use the subtitles from the torrent: ${err.message}`);

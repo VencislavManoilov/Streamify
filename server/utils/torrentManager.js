@@ -43,8 +43,16 @@ function isEpisodeFile(file, season, episode) {
     // Only the folder the file is in, the pack's own folder above it may name every season
     const fromPath = parseEpisodes(path.basename(path.dirname(file.path || '')));
     if (fromPath.seasons.length && !fromPath.seasons.includes(season)) return false;
+    // "Subs/Show.S01E03/2_English.srt": a folder of one episode says which, the number is the track's
+    if (fromPath.episodes.length === 1) return fromPath.episodes[0] === episode;
     const number = /^(?:e|ep|episode)?[ ._-]?(\d{1,3})(?:[ ._-]|$)/i.exec(file.name);
     return !!number && Number(number[1]) === episode && (fromPath.seasons.includes(season) || season === 1);
+}
+
+// Whether the name of a file or of its folder says which episode it is
+function namesEpisode(file) {
+    return parseEpisodes(file.name).episodes.length > 0
+        || parseEpisodes(path.basename(path.dirname(file.path || ''))).episodes.length > 0;
 }
 
 /**
@@ -77,10 +85,17 @@ function pickSubtitleFile(torrent, selector = null) {
     const video = pickVideoFile(torrent, selector);
     let subtitles = torrent.files.filter(file => SUBTITLE_FILE.test(file.name));
 
-    if (selector && video) {
-        const base = video.name.replace(VIDEO_FILE, '');
-        subtitles = subtitles.filter(file => (file.path || '').includes(base)
-            || isEpisodeFile({ name: file.name, path: file.path }, selector.season, selector.episode));
+    if (selector) {
+        // Without the episode's own file nothing says which subtitles are its
+        if (!video) return null;
+        const episodes = torrent.files.filter(file => VIDEO_FILE.test(file.name) && !SAMPLE_FILE.test(file.name));
+        if (episodes.length > 1) {
+            const base = video.name.replace(VIDEO_FILE, '');
+            // A bare number on a subtitle is the number of its track ("2_English.srt"), not of the episode
+            subtitles = subtitles.filter(file => (namesEpisode(file)
+                ? isEpisodeFile(file, selector.season, selector.episode)
+                : (file.path || '').includes(`${base}/`)));
+        }
     }
 
     const english = subtitles.find(file => ENGLISH_SUBTITLE.test(file.name.replace(SUBTITLE_FILE, '')));
@@ -325,7 +340,8 @@ class TorrentManager {
             const torrent = await entry.ready;
             const file = pickSubtitleFile(torrent, selector);
             if (!file) return null;
-            return { name: file.name, data: Buffer.from(await file.arrayBuffer()) };
+            // file.arrayBuffer() pads a read that stopped early with zeros
+            return { name: file.name, data: await readFileRange(file, 0, file.length) };
         };
 
         return withTimeout(read(), timeout, 'Timed out while reading the subtitles from the torrent');
@@ -426,7 +442,10 @@ async function readFileRange(file, start, length) {
     for await (const chunk of file[Symbol.asyncIterator]({ start, end: Math.max(end, start + 1) })) {
         chunks.push(Buffer.from(chunk));
     }
-    return Buffer.concat(chunks).subarray(0, end - start + 1);
+    const data = Buffer.concat(chunks).subarray(0, end - start + 1);
+    // WebTorrent just stops when the torrent goes away or a piece can't be read, which looks like a shorter file
+    if (data.length < end - start + 1) throw new Error('The torrent stopped before the file was read');
+    return data;
 }
 
 TorrentManager.pickVideoFile = pickVideoFile;

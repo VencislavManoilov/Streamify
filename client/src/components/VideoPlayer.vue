@@ -88,6 +88,7 @@ import Plyr from 'plyr';
 import 'plyr/dist/plyr.css';
 import { connection } from '../connection';
 import { loadOffset, loadStyle, saveOffset, saveStyle, shiftCues } from '../subtitles';
+import { SubtitleStream, emptyTrackSrc } from '../subtitleStream';
 import LoadingSpinner from './LoadingSpinner.vue';
 import PlayerSettings from './PlayerSettings.vue';
 
@@ -144,7 +145,11 @@ const HLS_CONFIG = {
             timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
             errorRetry: { maxNumRetry: 3, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
         }
-    }
+    },
+    // Converted videos carry no subtitles, and hls.js would empty and switch off the page's own tracks
+    subtitleStreamController: null,
+    subtitleTrackController: null,
+    timelineController: null
 };
 
 /**
@@ -190,7 +195,9 @@ export default {
             type: Boolean,
             default: false
         },
-        // [{ label, srclang, src, default }]
+        // [{ label, srclang, src, default }], or with `stream` instead of `src` for subtitles read from the
+        // video file while it plays (see subtitleStream.js). Plyr turns on the first in the viewer's language;
+        // `default` is for the browser's own controls on phones.
         subtitles: {
             type: Array,
             default: () => []
@@ -253,7 +260,7 @@ export default {
             settingsIcon: SETTINGS_ICON,
             speed: 1,
             speeds: SPEEDS,
-            // [{ index, label, language, status }], in the order of the video's text tracks
+            // [{ index, label, language, fromFile, syncKey, status }], in the order of the video's text tracks
             subtitleTracks: [],
             currentTrack: -1,
             subtitleOffset: 0,
@@ -309,6 +316,10 @@ export default {
         this.waitingForNetwork = false;
         this.staleStream = false;
         this.trackElements = [];
+        // The SubtitleStream of each track whose subtitles come from the video file
+        this.streams = [];
+        // The kind of subtitles the viewer picked last, { language, fromFile }, so the next video gets the same
+        this.trackChoice = null;
         this.hls = null;
         this.hlsMediaErrors = 0;
         // Subtitle offsets of this video by language, read from storage the first time they're needed
@@ -404,6 +415,7 @@ export default {
                 },
                 error: () => this.onVideoError(),
                 timeupdate: () => this.onTimeUpdate(),
+                seeking: () => this.updateStreams(true),
                 seeked: () => {
                     this.lastTime = videoElement.currentTime;
                     this.persistProgress();
@@ -428,6 +440,9 @@ export default {
             for (const [event, listener] of Object.entries(this.videoListeners)) {
                 videoElement.addEventListener(event, listener);
             }
+            // Without Plyr the browser's own menu turns subtitles on and off
+            this.onTextTracksChange = () => this.updateStreams();
+            videoElement.textTracks.addEventListener('change', this.onTextTracksChange);
 
             this.streamTimer = setInterval(() => this.checkStream(), 2000);
         },
@@ -738,71 +753,153 @@ export default {
         },
         // Puts the subtitle tracks of the current video on, unless they're on already
         syncSubtitleTracks() {
-            const signature = this.subtitles.map(track => track.src).join('|');
+            const signature = this.subtitles.map(track => track.src || track.stream).join('|');
             if (signature === this.placedSubtitles) return;
             this.placedSubtitles = signature;
             this.replaceSubtitleTracks();
         },
         replaceSubtitleTracks() {
             const videoElement = this.$refs.video;
+            // Plyr only takes the new track when its place in the list differs from the old one's. Otherwise
+            // it keeps turning on the removed track and the new one stays off, so it's made to pick again.
+            if (this.player) this.player.captions.currentTrack = -1;
+            this.streams.forEach(stream => stream && stream.stop());
+            this.streams = [];
             this.trackElements.forEach(track => track.remove());
             this.trackElements = [];
-            this.subtitleTracks = this.subtitles.map(({ label, srclang }, index) => ({ index, label, language: srclang, status: 'idle' }));
+            // The ones from the video file keep their own sync, the file's timing isn't a download's
+            this.subtitleTracks = this.subtitles.map(({ label, srclang, stream }, index) => ({
+                index,
+                label,
+                language: srclang,
+                fromFile: !!stream,
+                syncKey: stream ? `${srclang}-file` : srclang,
+                status: 'idle'
+            }));
 
-            this.subtitles.forEach(({ label, srclang, src, default: isDefault }, index) => {
+            this.subtitles.forEach(({ label, srclang, src, stream, default: isDefault }, index) => {
                 const track = document.createElement('track');
                 track.kind = 'subtitles';
                 track.label = label;
                 track.srclang = srclang;
-                track.src = src;
-                if (isDefault) track.default = true;
-                track.addEventListener('load', () => {
-                    this.setTrackStatus(index, 'ready');
-                    this.applyOffset(index);
-                });
+                // Subtitles from the video file go into a track that starts empty
+                track.src = stream ? emptyTrackSrc() : src;
+                // The browser would show a default track itself next to the one Plyr shows (Firefox does)
+                if (isDefault && !this.player) track.default = true;
+                if (stream) {
+                    this.streams[index] = new SubtitleStream({
+                        url: stream,
+                        getTrack: () => track.track,
+                        onStatus: status => this.setTrackStatus(index, status),
+                        onCues: () => this.applyOffset(index)
+                    });
+                } else {
+                    track.addEventListener('load', () => {
+                        this.setTrackStatus(index, 'ready');
+                        this.applyOffset(index);
+                    });
+                }
                 track.addEventListener('error', () => this.setTrackStatus(index, 'error'));
                 videoElement.appendChild(track);
                 this.trackElements[index] = track;
             });
+            this.updateStreams();
         },
         setTrackStatus(index, status) {
             const track = this.subtitleTracks[index];
-            if (track) track.status = status;
+            if (!track) return;
+            track.status = status;
+            // Subtitles that can't be shown give way to others in the same language
+            if (status === 'error' && index === this.currentTrack) {
+                const other = this.subtitleTracks.find(item => item.language === track.language && item.status !== 'error');
+                if (other) this.showTrack(other.index);
+            }
+        },
+        // Reads the subtitles from the video file that are on around where the video is, and stops the others
+        updateStreams(seeking = false) {
+            const videoElement = this.$refs.video;
+            if (!videoElement) return;
+            const time = this.pendingSeek !== null ? this.pendingSeek : videoElement.currentTime;
+            const duration = Number.isFinite(videoElement.duration) && videoElement.duration > 0 ? videoElement.duration : (this.duration || Infinity);
+            this.streams.forEach((stream, index) => {
+                if (!stream) return;
+                const element = this.trackElements[index];
+                const on = this.player ? this.currentTrack === index : !!element && element.track.mode === 'showing';
+                if (on && this.start && this.src) {
+                    stream.update(time, duration, seeking);
+                } else {
+                    stream.stop();
+                }
+            });
         },
         // Mirrors the subtitles Plyr shows (its CC button and the C key change them too)
         syncCaptions() {
             if (!this.player) return;
             this.currentTrack = this.player.currentTrack;
 
+            // Plyr turns on the first track in the viewer's language; the kind they picked last goes first
+            const shown = this.subtitleTracks[this.currentTrack];
+            const choice = this.trackChoice;
+            if (shown && choice && shown.language === choice.language && shown.fromFile !== choice.fromFile) {
+                const preferred = this.subtitleTracks.find(item => item.language === choice.language && item.fromFile === choice.fromFile && item.status !== 'error');
+                if (preferred) {
+                    this.showTrack(preferred.index);
+                    return;
+                }
+            }
+
+            this.updateStreams();
             const track = this.subtitleTracks[this.currentTrack];
             if (!track) return;
-            this.subtitleOffset = this.offsetFor(track.language);
+            this.subtitleOffset = this.offsetFor(track.syncKey);
             const element = this.trackElements[this.currentTrack];
             // Selecting a track makes the browser download it
-            if (element && element.readyState < 2 && track.status !== 'error') track.status = 'loading';
+            if (element && element.readyState < 2 && track.status !== 'error' && !this.streams[this.currentTrack]) track.status = 'loading';
         },
+        // The viewer picked subtitles in the settings, or -1 to turn them off
         selectTrack(index) {
             if (!this.player) return;
-            this.player.currentTrack = index;
+            const track = this.subtitleTracks[index];
+            if (track) this.trackChoice = { language: track.language, fromFile: track.fromFile };
+            this.showTrack(index);
+        },
+        // Plyr's own way, its currentTrack setter, starts its captions over and then turns on the first track
+        // in that language again, so of two English tracks the second could never be picked. Its state is set
+        // here like its internal set() does it.
+        showTrack(index) {
+            if (!this.player) return;
+            const element = this.trackElements[index];
+            if (index === -1 || !element) {
+                this.player.toggleCaptions(false);
+            } else {
+                const captions = this.player.captions;
+                captions.currentTrack = index;
+                captions.currentTrackNode = element.track;
+                captions.language = element.track.language;
+                this.player.storage.set({ language: element.track.language });
+                // Turns it on (Plyr loads it by making it 'hidden'), and draws its lines right away
+                this.player.toggleCaptions(true);
+                element.track.dispatchEvent(new Event('cuechange'));
+            }
             this.syncCaptions();
         },
-        offsetFor(language) {
-            if (!(language in this.offsets)) this.offsets[language] = loadOffset(this.subtitleKey, language);
-            return this.offsets[language];
+        offsetFor(syncKey) {
+            if (!(syncKey in this.offsets)) this.offsets[syncKey] = loadOffset(this.subtitleKey, syncKey);
+            return this.offsets[syncKey];
         },
         setOffset(offset) {
             const track = this.subtitleTracks[this.currentTrack];
             if (!track) return;
             this.subtitleOffset = offset;
-            this.offsets[track.language] = offset;
-            saveOffset(this.subtitleKey, track.language, offset);
+            this.offsets[track.syncKey] = offset;
+            saveOffset(this.subtitleKey, track.syncKey, offset);
             this.applyOffset(this.currentTrack);
         },
         applyOffset(index) {
             const element = this.trackElements[index];
             const track = this.subtitleTracks[index];
             if (!element || !track) return;
-            shiftCues(element.track, this.offsetFor(track.language));
+            shiftCues(element.track, this.offsetFor(track.syncKey));
         },
         setSubtitleStyle(style) {
             this.subtitleStyle = style;
@@ -910,6 +1007,7 @@ export default {
             this.lastTime = time;
             const duration = Number.isFinite(videoElement.duration) && videoElement.duration > 0 ? videoElement.duration : this.duration;
             if (this.everPlayed && duration) this.$emit('time', { currentTime: time, duration });
+            this.updateStreams();
         },
         startSavingProgress() {
             if (this.saveTimer) return;
@@ -977,7 +1075,9 @@ export default {
             for (const [event, listener] of Object.entries(this.videoListeners)) {
                 videoElement.removeEventListener(event, listener);
             }
+            videoElement.textTracks.removeEventListener('change', this.onTextTracksChange);
         }
+        this.streams.forEach(stream => stream && stream.stop());
 
         if (this.player) {
             this.player.destroy();

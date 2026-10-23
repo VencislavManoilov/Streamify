@@ -23,6 +23,8 @@ const ID = {
     LANGUAGE: 0x22B59C,
     LANGUAGE_BCP47: 0x22B59D,
     FLAG_DEFAULT: 0x88,
+    FLAG_FORCED: 0x55AA,
+    FLAG_HEARING_IMPAIRED: 0x55AB,
     VIDEO: 0xE0,
     PIXEL_WIDTH: 0xB0,
     PIXEL_HEIGHT: 0xBA,
@@ -40,6 +42,7 @@ const ID = {
 
 const VIDEO_TRACK = 1;
 const AUDIO_TRACK = 2;
+const SUBTITLE_TRACK = 0x11;
 const HEAD_BYTES = 256 * 1024;
 // The index is nearly always at the end, so the end is read together with the start instead of after it
 const TAIL_BYTES = 2 * 1024 * 1024;
@@ -50,6 +53,7 @@ const MAX_HEADER_ELEMENT = 4 * 1024 * 1024;
 // Matroska codec IDs, named like ffmpeg names them
 const VIDEO_CODECS = { 'V_MPEG4/ISO/AVC': 'h264', 'V_MPEGH/ISO/HEVC': 'hevc', V_AV1: 'av1', V_VP9: 'vp9', V_VP8: 'vp8', 'V_MPEG4/ISO/ASP': 'mpeg4', 'V_MPEG4/ISO/SP': 'mpeg4', V_MPEG2: 'mpeg2video' };
 const AUDIO_CODECS = { A_AC3: 'ac3', A_EAC3: 'eac3', A_DTS: 'dts', A_TRUEHD: 'truehd', A_OPUS: 'opus', A_VORBIS: 'vorbis', A_FLAC: 'flac', 'A_MPEG/L3': 'mp3', 'A_MPEG/L2': 'mp2' };
+const SUBTITLE_CODECS = { 'S_TEXT/UTF8': 'subrip', 'S_TEXT/ASCII': 'subrip', 'S_TEXT/ASS': 'ass', 'S_TEXT/SSA': 'ssa', 'S_ASS': 'ass', 'S_SSA': 'ssa', 'S_TEXT/WEBVTT': 'webvtt', 'S_HDMV/PGS': 'hdmv_pgs_subtitle', S_VOBSUB: 'dvd_subtitle', 'S_DVBSUB': 'dvb_subtitle' };
 
 // An element ID keeps its length marker, e.g. 0x1A45DFA3
 function readId(buffer, offset) {
@@ -151,7 +155,7 @@ function isTenBit(codec, codecPrivate) {
 
 function parseTrack(buffer, start, end) {
     // Matroska's defaults for elements a file leaves out
-    const track = { number: null, type: null, codecId: '', name: '', language: 'eng', default: true, width: 0, height: 0, channels: 1, transfer: null, codecPrivate: null };
+    const track = { number: null, type: null, codecId: '', name: '', language: 'eng', default: true, forced: false, hearingImpaired: false, width: 0, height: 0, channels: 1, transfer: null, codecPrivate: null };
     let bcp47 = null;
     children(buffer, start, end, (id, dataStart, size) => {
         if (id === ID.TRACK_NUMBER) track.number = readUint(buffer, dataStart, size);
@@ -162,6 +166,8 @@ function parseTrack(buffer, start, end) {
         else if (id === ID.LANGUAGE) track.language = readString(buffer, dataStart, size);
         else if (id === ID.LANGUAGE_BCP47) bcp47 = readString(buffer, dataStart, size);
         else if (id === ID.FLAG_DEFAULT) track.default = readUint(buffer, dataStart, size) === 1;
+        else if (id === ID.FLAG_FORCED) track.forced = readUint(buffer, dataStart, size) === 1;
+        else if (id === ID.FLAG_HEARING_IMPAIRED) track.hearingImpaired = readUint(buffer, dataStart, size) === 1;
         else if (id === ID.VIDEO) {
             children(buffer, dataStart, dataStart + size, (videoId, videoStart, videoSize) => {
                 if (videoId === ID.PIXEL_WIDTH) track.width = readUint(buffer, videoStart, videoSize);
@@ -224,7 +230,7 @@ async function readCues(bytesAt, cuesOffset, fileLength, videoTrack, scale) {
 /**
  * Reads a Matroska file's header and keyframe index. `read(start, length)` resolves to the bytes at that spot
  * of the file. Resolves to null when the file isn't Matroska, otherwise to
- * { duration, video, audio: [...], keyframes } with times in seconds, the tracks described like utils/media.js
+ * { duration, video, audio: [...], subtitles: [...], keyframes } with times in seconds, the tracks described like utils/media.js
  * describes them, and `keyframes` null when the file has no index of them.
  */
 async function readMatroska(read, fileLength) {
@@ -301,6 +307,7 @@ async function readMatroska(read, fileLength) {
     const scale = info.timestampScale / 1e9;
     const videoTrack = tracks.find(track => track.type === VIDEO_TRACK) || null;
     const audioTracks = tracks.filter(track => track.type === AUDIO_TRACK);
+    const subtitleTracks = tracks.filter(track => track.type === SUBTITLE_TRACK);
     const keyframes = await readCues(bytesAt, cuesOffset, fileLength, videoTrack ? videoTrack.number : null, scale);
 
     const videoCodec = videoTrack ? VIDEO_CODECS[videoTrack.codecId] || videoTrack.codecId.toLowerCase() : null;
@@ -323,6 +330,15 @@ async function readMatroska(read, fileLength) {
             language: track.language === 'und' ? '' : track.language,
             title: track.name,
             default: track.default
+        })),
+        subtitles: subtitleTracks.map((track, position) => ({
+            position,
+            codec: SUBTITLE_CODECS[track.codecId] || track.codecId.toLowerCase(),
+            language: track.language === 'und' ? '' : track.language,
+            title: track.name,
+            default: track.default,
+            forced: track.forced,
+            hearingImpaired: track.hearingImpaired
         }))
     };
 }

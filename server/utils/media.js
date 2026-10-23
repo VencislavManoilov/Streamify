@@ -68,7 +68,7 @@ function containerOf(formatName) {
     return names[0] || 'unknown';
 }
 
-// What the file has inside: its container, the video and every audio track
+// What the file has inside: its container, the video and every audio and subtitle track
 async function probe(url) {
     const stdout = await run(FFPROBE, [
         '-v', 'error',
@@ -85,6 +85,7 @@ async function probe(url) {
     const streams = data.streams || [];
     const videoStream = streams.find(stream => stream.codec_type === 'video' && !(stream.disposition && stream.disposition.attached_pic));
     const audioStreams = streams.filter(stream => stream.codec_type === 'audio');
+    const subtitleStreams = streams.filter(stream => stream.codec_type === 'subtitle');
     const format = data.format || {};
 
     return {
@@ -109,6 +110,16 @@ async function probe(url) {
             language: (stream.tags && stream.tags.language) || '',
             title: (stream.tags && stream.tags.title) || '',
             default: !!(stream.disposition && stream.disposition.default)
+        })),
+        // Picked the same way, with -map 0:s:N
+        subtitles: subtitleStreams.map((stream, position) => ({
+            position,
+            codec: stream.codec_name,
+            language: (stream.tags && stream.tags.language) || '',
+            title: (stream.tags && stream.tags.title) || '',
+            default: !!(stream.disposition && stream.disposition.default),
+            forced: !!(stream.disposition && stream.disposition.forced),
+            hearingImpaired: !!(stream.disposition && stream.disposition.hearing_impaired)
         }))
     };
 }

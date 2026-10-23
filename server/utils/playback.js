@@ -6,6 +6,7 @@ const { HlsService, buildPlan } = require('./hls');
 const TorrentManager = require('./torrentManager');
 const { parseRelease } = require('./releaseInfo');
 const { markFailed } = require('./streamSources');
+const { isTextSubtitle } = require('./embeddedSubtitles');
 
 // How long a torrent gets to find peers and its file list before another one is better tried
 const METADATA_WAIT = 30 * 1000;
@@ -27,7 +28,8 @@ function guessInfo(file) {
         startTime: 0,
         guessed: true,
         video: { codec: release.codec || 'h264', tenBit: release.tenBit, height: 0, width: 0 },
-        audio: release.audio ? [{ position: 0, codec: release.audio, channels: 2, language: '', title: '', default: true }] : []
+        audio: release.audio ? [{ position: 0, codec: release.audio, channels: 2, language: '', title: '', default: true }] : [],
+        subtitles: []
     };
 }
 
@@ -245,6 +247,15 @@ class Playback {
                     title: track.title,
                     codec: track.codec,
                     channels: track.channels
+                })),
+                // The subtitle tracks in the file that can be shown, see utils/embeddedSubtitles.js
+                subtitles: (info.subtitles || []).filter(isTextSubtitle).map(track => ({
+                    index: track.position,
+                    language: track.language,
+                    title: track.title,
+                    forced: !!track.forced,
+                    hearingImpaired: !!track.hearingImpaired,
+                    default: !!track.default
                 })),
                 guessed: !!info.guessed,
                 codecs: {
