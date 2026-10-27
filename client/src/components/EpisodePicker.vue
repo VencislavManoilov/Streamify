@@ -2,7 +2,7 @@
     <section class="episodes" aria-labelledby="episodes-title">
         <div class="head">
             <h2 id="episodes-title">Episodes</h2>
-            <div ref="tabs" class="tabs" role="tablist" aria-label="Seasons">
+            <div ref="tabs" v-side-scroll class="tabs" role="tablist" aria-label="Seasons">
                 <button
                     v-for="season in seasons"
                     :key="season.number"
@@ -73,6 +73,7 @@
 <script>
 import { formatAirDate, hasAired } from '../seriesData';
 import { seedersText } from '../playback';
+import { sideScroll } from '../sideScroll';
 
 /**
  * The seasons of a series as tabs and the episodes of one as cards: how far each was watched and whether
@@ -80,6 +81,9 @@ import { seedersText } from '../playback';
  */
 export default {
     name: 'EpisodePicker',
+    directives: {
+        sideScroll
+    },
     props: {
         seasons: {
             type: Array,
@@ -219,7 +223,7 @@ export default {
     font-stretch: 112%;
 }
 
-/* Seasons as pills in a row that scrolls sideways */
+/* Seasons as pills in a row that scrolls sideways, with the mouse wheel too, and can be dragged */
 .tabs {
     display: flex;
     gap: 8px;
@@ -227,6 +231,14 @@ export default {
     padding: 2px var(--gutter) 4px;
     overflow-x: auto;
     scrollbar-width: none;
+    cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.tabs.dragging,
+.tabs.dragging .tab {
+    cursor: grabbing;
 }
 
 .tabs::-webkit-scrollbar {

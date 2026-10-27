@@ -66,7 +66,7 @@
 
                     <section v-if="seasons.length" class="seasons">
                         <h3>Seasons</h3>
-                        <div class="season-list">
+                        <div v-side-scroll class="season-list">
                             <router-link v-for="season in seasons" :key="season.number" :to="seasonLink(season)" class="season">
                                 <span class="season-name">{{ season.name }}</span>
                                 <span class="season-meta">{{ seasonMeta(season) }}</span>
@@ -87,6 +87,7 @@
 <script>
 import { episodeLabel } from '../playback';
 import { formatAirDate, seriesData, seriesYears } from '../seriesData';
+import { sideScroll } from '../sideScroll';
 import MovieExtras from './MovieExtras.vue';
 import WatchlistButton from './WatchlistButton.vue';
 
@@ -106,6 +107,9 @@ export default {
     components: {
         MovieExtras,
         WatchlistButton
+    },
+    directives: {
+        sideScroll
     },
     props: {
         series: {
@@ -334,7 +338,7 @@ export default {
     font-stretch: 112%;
 }
 
-/* The seasons in a row that scrolls sideways */
+/* The seasons in a row that scrolls sideways, with the mouse wheel too, and can be dragged */
 .season-list {
     display: flex;
     gap: 10px;
@@ -342,6 +346,14 @@ export default {
     padding: 2px 24px 6px;
     overflow-x: auto;
     scrollbar-width: none;
+    cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.season-list.dragging,
+.season-list.dragging .season {
+    cursor: grabbing;
 }
 
 .season-list::-webkit-scrollbar {
@@ -370,6 +382,10 @@ export default {
 
 .season:active {
     transform: scale(0.97);
+}
+
+.season-list.dragging .season {
+    transform: none;
 }
 
 .season-name {
